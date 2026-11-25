@@ -38,8 +38,7 @@ def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
     if not raw:
         raise PullError(
             "LINK_GECERSIZ",
-            "Link boş olamaz. Şu anda yalnızca instagram.com linkleri desteklenir.",
-            upload_fallback=True,
+            "Link boş olamaz. Instagram linki girin veya videoyu dosya olarak yükleyin.",
         )
     if "://" not in raw:
         raw = "https://" + raw
@@ -48,15 +47,13 @@ def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
     except ValueError:
         raise PullError(
             "LINK_GECERSIZ",
-            "Link biçimi geçersiz. Şu anda yalnızca instagram.com linkleri desteklenir.",
-            upload_fallback=True,
+            "Link biçimi geçersiz. Instagram linki girin veya videoyu dosya olarak yükleyin.",
         ) from None
 
     if parts.scheme not in ("http", "https"):
         raise PullError(
             "LINK_GECERSIZ",
-            "Yalnızca http/https linkleri desteklenir.",
-            upload_fallback=True,
+            "Yalnızca web linkleri desteklenir. Videoyu dosya olarak yükleyin.",
         )
 
     host = _normalize_host(parts.hostname)
@@ -67,6 +64,5 @@ def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
     supported = ", ".join(sorted(allowed_hosts()))
     raise PullError(
         "LINK_GECERSIZ",
-        f"Bu site desteklenmiyor. İzin verilen siteler: {supported}.",
-        upload_fallback=True,
+        f"Bu site desteklenmiyor (izin verilen: {supported}). Videoyu dosya olarak yükleyin.",
     )

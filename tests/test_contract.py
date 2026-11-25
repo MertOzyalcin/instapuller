@@ -14,6 +14,13 @@ from instapuller.downloader import fetch_video
 from instapuller.models import PullError
 
 
+class NoWaitLimiter:
+    """Hiç beklemeyen sahte limiter (üretim kodunda cooldown kapatılamaz)."""
+
+    def acquire(self, *, wait: bool = True) -> float:
+        return 0.0
+
+
 class FakeYDL:
     def __init__(self, opts: dict[str, Any], info: dict[str, Any], write_bytes: int | None = 1024):
         self.opts = opts
@@ -59,7 +66,7 @@ def test_fetch_video_contract_matches_autocript(tmp_path):
         "https://www.instagram.com/reel/Chunk8-jurw/",
         out_dir=out_dir,
         state_file=state,
-        cooldown_s=0,
+        limiter=NoWaitLimiter(),
         ydl_factory=lambda opts: FakeYDL(opts, _sample_info(), write_bytes=2048),
         duration_prober=lambda path, ffprobe_bin=None: 42.346,
     )
@@ -106,7 +113,7 @@ def test_carousel_rejected_with_ig_video_degil(tmp_path):
             "https://www.instagram.com/p/MultiPost123/",
             out_dir=tmp_path / "out",
             state_file=tmp_path / "state.json",
-            cooldown_s=0,
+            limiter=NoWaitLimiter(),
             ydl_factory=lambda opts: FakeYDL(opts, carousel_info),
             duration_prober=lambda path, ffprobe_bin=None: 10.0,
         )
@@ -121,7 +128,7 @@ def test_video_over_180s_rejected_and_file_deleted(tmp_path):
             "https://www.instagram.com/reel/LongReel123/",
             out_dir=out_dir,
             state_file=tmp_path / "state.json",
-            cooldown_s=0,
+            limiter=NoWaitLimiter(),
             max_duration_s=180.0,
             ydl_factory=lambda opts: FakeYDL(opts, _sample_info(), write_bytes=1024),
             duration_prober=lambda path, ffprobe_bin=None: 185.2,
@@ -139,7 +146,7 @@ def test_file_exceeding_max_size_rejected_and_deleted(tmp_path):
             "https://www.instagram.com/reel/BigReel123/",
             out_dir=out_dir,
             state_file=tmp_path / "state.json",
-            cooldown_s=0,
+            limiter=NoWaitLimiter(),
             max_filesize_mb=1,  # 1 MB sınır
             ydl_factory=lambda opts: FakeYDL(opts, _sample_info(), write_bytes=2 * 1024 * 1024),
             duration_prober=lambda path, ffprobe_bin=None: 10.0,

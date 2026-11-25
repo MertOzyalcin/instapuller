@@ -34,9 +34,8 @@ def resolve_ffprobe(ffprobe_bin: str | Path | None = None) -> str:
 
     raise PullError(
         "FFPROBE_YOK",
-        "Video süresini ölçmek için ffprobe bulunamadı. --ffprobe-bin ile yolunu belirtin "
-        "veya ffprobe'u PATH'e ekleyin.",
-        upload_fallback=True,
+        "Kurulum eksik: videonun süresi ölçülemiyor. Kurulumu tamamlayıp tekrar deneyin.",
+        detail="ffprobe bulunamadı; --ffprobe-bin veya INSTAPULLER_FFPROBE_BIN ile yolunu verin ya da PATH'e ekleyin.",
     )
 
 
@@ -67,8 +66,7 @@ def probe_duration(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PullError(
             "DOSYA_BOZUK",
-            "İndirilen video ffprobe ile okunamadı. Videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
+            "İndirilen video okunamadı. Videoyu dosya olarak yükleyin.",
             detail=sanitize_detail(str(exc)),
         ) from None
 
@@ -76,7 +74,6 @@ def probe_duration(
         raise PullError(
             "DOSYA_BOZUK",
             "İndirilen video bozuk görünüyor veya okunamadı. Videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
             detail=sanitize_detail(proc.stderr),
         )
 
@@ -87,7 +84,6 @@ def probe_duration(
         raise PullError(
             "DOSYA_BOZUK",
             "İndirilen videonun süresi belirlenemedi. Videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
             detail=sanitize_detail(f"ffprobe çıktısı geçersiz: {raw_out}"),
         ) from None
 
@@ -95,7 +91,6 @@ def probe_duration(
         raise PullError(
             "DOSYA_BOZUK",
             "İndirilen videonun süresi geçersiz. Videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
         )
 
     return duration

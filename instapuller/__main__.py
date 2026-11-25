@@ -14,8 +14,12 @@ from instapuller.downloader import (
     fetch_video,
 )
 from instapuller.models import PullError
-from instapuller.rate_limit import DEFAULT_COOLDOWN_S
+from instapuller.rate_limit import DEFAULT_COOLDOWN_S, MIN_COOLDOWN_S
 from instapuller.sanitize import sanitize_detail
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_INTERRUPTED = 130
 
 
 def _emit(payload: dict) -> None:
@@ -24,12 +28,21 @@ def _emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
+class _ArgError(Exception):
+    """argparse hatasını JSON'a çevirmek için iç istisna."""
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str):  # type: ignore[override]
+        raise _ArgError(message)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _JsonArgumentParser(
         prog="instapuller",
         description="Anonim Instagram video/Reel indirme ve metrik aracı (JSON CLI).",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=_JsonArgumentParser)
 
     fetch_p = sub.add_parser("fetch", help="Verilen linkteki videoyu indirir ve metrikleri döner.")
     fetch_p.add_argument("url", help="Instagram Reel veya tekil video linki.")
@@ -63,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cooldown",
         type=float,
         default=DEFAULT_COOLDOWN_S,
-        help=f"İstekler arası bekleme süresi, saniye (varsayılan: {int(DEFAULT_COOLDOWN_S)}).",
+        help=f"İstekler arası bekleme süresi, saniye (varsayılan ve alt sınır: {int(MIN_COOLDOWN_S)}).",
     )
     fetch_p.add_argument(
         "--max-duration",
@@ -87,7 +100,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--state-file",
         type=Path,
         default=None,
-        help="Cooldown durum dosyasının yolu (opsiyonel).",
+        help="Cooldown durum dosyasının yolu (varsayılan: kullanıcıya özgü sabit yol).",
     )
 
     clean_p = sub.add_parser("cleanup", help="İndirilen geçici video dosyasını güvenli biçimde siler.")
@@ -96,11 +109,28 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _arg_error(detail: str) -> int:
+    err = PullError(
+        "ARG_GECERSIZ",
+        "Komut satırı argümanları geçersiz.",
+        detail=sanitize_detail(detail),
+    )
+    _emit(err.to_dict())
+    return EXIT_ERROR
+
+
+def _run(argv: list[str] | None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except _ArgError as exc:
+        return _arg_error(str(exc))
+    except SystemExit as exc:  # -h/--help: JSON üretmeyen tek istisna
+        return int(exc.code or 0)
 
     if args.command == "fetch":
+        if not (args.cooldown >= MIN_COOLDOWN_S):
+            return _arg_error(f"--cooldown en az {int(MIN_COOLDOWN_S)} saniye olmalı.")
         try:
             result = fetch_video(
                 args.url,
@@ -113,37 +143,47 @@ def main(argv: list[str] | None = None) -> int:
                 state_file=args.state_file,
                 ffprobe_bin=args.ffprobe_bin,
             )
-            _emit(result.to_dict())
-            return 0
         except PullError as err:
             _emit(err.to_dict())
-            return 1
+            return EXIT_ERROR
         except Exception as exc:
-            err = PullError(
-                "IG_INDIRME_HATASI",
-                "Beklenmeyen bir hata oluştu. Videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
-                detail=sanitize_detail(str(exc)),
-            )
-            _emit(err.to_dict())
-            return 1
+            _emit(_unexpected(exc).to_dict())
+            return EXIT_ERROR
+        _emit(result.to_dict())
+        return EXIT_OK
 
-    if args.command == "cleanup":
-        try:
-            deleted = cleanup_file(args.path)
-            _emit({"ok": True, "deleted": deleted})
-            return 0
-        except Exception as exc:
-            err = PullError(
-                "SILME_HATASI",
-                "Dosya silinemedi.",
-                upload_fallback=False,
-                detail=sanitize_detail(str(exc)),
-            )
-            _emit(err.to_dict())
-            return 1
+    # cleanup
+    try:
+        deleted = cleanup_file(args.path)
+    except Exception as exc:
+        err = PullError(
+            "SILME_HATASI",
+            "Dosya silinemedi.",
+            detail=sanitize_detail(f"{type(exc).__name__}: {exc}"),
+        )
+        _emit(err.to_dict())
+        return EXIT_ERROR
+    _emit({"ok": True, "deleted": deleted})
+    return EXIT_OK
 
-    return 2
+
+def _unexpected(exc: BaseException) -> PullError:
+    return PullError(
+        "BEKLENMEYEN_HATA",
+        "Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.",
+        detail=sanitize_detail(f"{type(exc).__name__}: {exc}"),
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _run(argv)
+    except KeyboardInterrupt:
+        _emit(PullError("BEKLENMEYEN_HATA", "İşlem iptal edildi.").to_dict())
+        return EXIT_INTERRUPTED
+    except Exception as exc:  # son çare: çıktı her zaman JSON
+        _emit(_unexpected(exc).to_dict())
+        return EXIT_ERROR
 
 
 if __name__ == "__main__":

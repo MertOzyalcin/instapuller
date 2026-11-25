@@ -12,16 +12,24 @@ from typing import Any
 
 import yt_dlp
 
-from instapuller.models import PullError, PullResult
+from instapuller.models import TOOL_OUTDATED_DETAIL, PullError, PullResult
 from instapuller.probe import probe_duration
-from instapuller.rate_limit import DEFAULT_COOLDOWN_S, CooldownLimiter
+from instapuller.rate_limit import (
+    DEFAULT_COOLDOWN_S,
+    MIN_COOLDOWN_S,
+    CooldownLimiter,
+    default_state_file,
+)
 from instapuller.sites import parse_url
 
-DEFAULT_MAX_DURATION_S = 180.0
+DEFAULT_MAX_DURATION_S = 185.0
 DEFAULT_MAX_FILESIZE_MB = 200
-DEFAULT_STATE_FILE = Path(".state") / "rate_limit.json"
 
 _SAFE_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _fmt_seconds(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else str(round(value, 1))
 
 
 def _safe_slug(text: str | None) -> str:
@@ -53,9 +61,8 @@ def _check_carousel_or_non_video(info: Any) -> None:
     if not isinstance(info, dict):
         raise PullError(
             "IG_ARAC_GUNCEL_DEGIL",
-            "Instagram yanıtı beklenmeyen bir biçimde geldi; yt-dlp güncel olmayabilir. "
-            "README'deki güncelleme komutunu çalıştırın veya videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
+            "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin.",
+            detail=TOOL_OUTDATED_DETAIL,
         )
 
     if info.get("_type") == "playlist" or isinstance(info.get("entries"), list):
@@ -63,7 +70,6 @@ def _check_carousel_or_non_video(info: Any) -> None:
             "IG_VIDEO_DEGIL",
             "Çoklu gönderiler (carousel) desteklenmiyor; yalnızca tekil video veya Reel linki girin. "
             "Videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
         )
 
     vcodec = info.get("vcodec")
@@ -71,7 +77,6 @@ def _check_carousel_or_non_video(info: Any) -> None:
         raise PullError(
             "IG_VIDEO_DEGIL",
             "Bu gönderide indirilebilir video bulunamadı. Videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
         )
 
 
@@ -104,8 +109,8 @@ def fetch_video(
 
     # 2. Ardışık istek koruması (cooldown)
     active_limiter = limiter or CooldownLimiter(
-        Path(state_file) if state_file is not None else DEFAULT_STATE_FILE,
-        cooldown_s=cooldown_s,
+        Path(state_file) if state_file is not None else default_state_file(),
+        cooldown_s=max(float(cooldown_s), MIN_COOLDOWN_S),
     )
     active_limiter.acquire(wait=wait)
 
@@ -147,7 +152,6 @@ def fetch_video(
                     raise PullError(
                         "DOSYA_BUYUK",
                         f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
-                        upload_fallback=True,
                     )
                 ydl.process_ie_result(info, download=True)
         except Exception as exc:
@@ -160,13 +164,11 @@ def fetch_video(
                 raise PullError(
                     "DOSYA_BUYUK",
                     f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
-                    upload_fallback=True,
                 )
             raise PullError(
-                "IG_INDIRME_HATASI",
-                "Video dosyası indirilemedi (boyut sınırına takılmış veya boş dönmüş olabilir). "
-                "Videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
+                "KAYNAK_GECICI",
+                "Video şu anda indirilemedi. Biraz sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
+                detail="İndirme tamamlandı ama klasörde video dosyası oluşmadı (boyut sınırına takılmış veya boş yanıt olabilir).",
             )
 
         staged_file = downloaded[0]
@@ -174,7 +176,6 @@ def fetch_video(
             raise PullError(
                 "DOSYA_BUYUK",
                 f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
             )
 
         # 5. İndirme sonrası ffprobe ile kesin süre ölçümü
@@ -182,9 +183,8 @@ def fetch_video(
         if duration_s > max_duration_s:
             raise PullError(
                 "VIDEO_UZUN",
-                f"Video {int(max_duration_s)} saniyeyi aşıyor ({round(duration_s, 1)} sn). "
-                "Bu sürüm en fazla 3 dakikalık videoları işler.",
-                upload_fallback=True,
+                f"Video {_fmt_seconds(max_duration_s)} saniyeyi aşıyor ({round(duration_s, 1)} sn). "
+                "Videoyu kısaltıp dosya olarak yükleyin.",
             )
 
         # 6. Dosyayı hedef klasöre taşı

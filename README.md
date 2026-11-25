@@ -13,6 +13,16 @@ uv sync
 
 > Süre ölçümü için sistemde `ffprobe` bulunmalı veya `--ffprobe-bin` / `INSTAPULLER_FFPROBE_BIN` ile yolu verilmelidir.
 
+## Cooldown ve State Dosyası
+
+- Ardışık istekler arasında en az **15 sn** beklenir. `--cooldown` / `cooldown_s` 15'in altına **inemez**: Python API'de düşük değer sessizce 15'e yükseltilir, CLI'da `--cooldown` 15'ten küçükse `ARG_GECERSIZ` döner. Daha büyük değerlere izin verilir.
+- Bu kural **süreçler arası** korunur: state dosyasının yanındaki `<state>.lock` dosyası üzerinde işletim sistemi kilidi alınır, her süreç kendine bir zaman yuvası ayırır ve kilit dışında uyur. Aynı anda başlayan 3 süreç 15 sn arayla sıraya girer.
+- Varsayılan state dosyası çalışma klasöründen bağımsızdır. Öncelik sırası:
+  1. `--state-file` (CLI) / `state_file=` (API)
+  2. `INSTAPULLER_STATE_FILE` ortam değişkeni
+  3. Windows: `%LOCALAPPDATA%\instapuller\rate_limit.json`; diğer sistemler: `~/.local/state/instapuller/rate_limit.json`
+- `keep_video=false` iken indirilen dosyayı silmek (`cleanup`) çağıranın sorumluluğundadır.
+
 ## `yt-dlp` Güncelleme (Tek Satır)
 
 Instagram yanıt biçimi değiştiğinde `IG_ARAC_GUNCEL_DEGIL` hatası alırsanız `yt-dlp` sürümünü şu tek komutla güncelleyebilirsiniz:
@@ -36,8 +46,11 @@ uv run instapuller fetch "https://www.instagram.com/reel/Chunk8-jurw/" --out-dir
 # Videoyu kalıcı olarak sakla
 uv run instapuller fetch "https://www.instagram.com/reel/Chunk8-jurw/" --out-dir "./downloads" --keep-video
 
-# Cooldown dolmadıysa beklemeden anında IG_COOLDOWN döndür
+# Cooldown dolmadıysa beklemeden anında IG_COOLDOWN döndür (retry_after_s ile)
 uv run instapuller fetch "https://www.instagram.com/reel/Chunk8-jurw/" --no-wait
+
+# Link `-` ile başlayabiliyorsa (ör. kullanıcı girdisi) URL'den önce `--` verin
+uv run instapuller fetch --out-dir "./tmp" -- "<link>"
 
 # Transkript sonrası geçici videoyu sil
 uv run instapuller cleanup "C:\path\to\video.mp4"
@@ -53,7 +66,7 @@ result = fetch_video(
     out_dir="./tmp",
     keep_video=False,   # Varsayılan kapalı
     wait=True,          # Varsayılan --wait (15 sn cooldown)
-    max_duration_s=180, # 3 dakika sınırı
+    max_duration_s=185, # varsayılan 185 sn
     max_filesize_mb=200 # 200 MB sınırı
 )
 print(result.to_dict())
@@ -102,21 +115,46 @@ Hata yanıtı (`exit code = 1`):
 }
 ```
 
+`IG_COOLDOWN` hatası ayrıca `retry_after_s` (saniye, sayı) alanı taşır; `--no-wait` ile çağıran bu kadar sonra tekrar deneyebilir:
+
+```json
+{"ok": false, "error": {"code": "IG_COOLDOWN", "message": "...", "upload_fallback": true, "retry_after_s": 10.75}}
+```
+
+`message` son kullanıcıya gösterilebilir sade metindir; teknik ayrıntılar (araç adı, yol, ham hata) `detail` alanındadır.
+
+## Çıkış Kodları
+
+| Kod | Anlam |
+| :---: | :--- |
+| `0` | Başarı (stdout'ta tek satır JSON, `"ok": true`) |
+| `1` | Hata (stdout'ta tek satır JSON, `"ok": false`); argüman hataları dahil |
+| `130` | Kullanıcı iptali (Ctrl+C); `BEKLENMEYEN_HATA` JSON'u yazılır |
+
+**`-h` / `--help` JSON üretmeyen tek istisnadır**: yardım metni basar ve `0` ile çıkar. Başka hiçbir durumda stdout'ta JSON dışı çıktı olmaz; geçersiz/eksik argüman, bilinmeyen seçenek ve eksik alt komut `ARG_GECERSIZ` JSON'u (çıkış `1`) döner.
+
+> **autocript notu:** Link kullanıcıdan geldiği için `-` ile başlayabilir (ör. `-h`) ve seçenek sanılabilir. Çağırırken URL'den önce `--` geçirin: `instapuller fetch [seçenekler] -- <url>`. Böyle bir girdi `LINK_GECERSIZ` döner, yardım metni basmaz.
+
 ## Hata Kodları
 
-| Kod | Açıklama | `upload_fallback` |
+Kod listesi tek bir tabloda tutulur (`instapuller/models.py` → `ERROR_CODES`); tabloda olmayan kodla `PullError` oluşturulamaz.
+
+| Kod | Ne zaman | `upload_fallback` |
 | :--- | :--- | :---: |
-| `LINK_GECERSIZ` | İzin listesinde olmayan site veya geçersiz link biçimi | `true` |
-| `IG_COOLDOWN` | `--no-wait` verildiğinde 15 sn bekleme süresi dolmamış (`retry_after_s` içerir) | `true` |
+| `LINK_GECERSIZ` | İzin listesinde olmayan site, geçersiz/desteklenmeyen link | `true` |
 | `IG_ERISILEMEDI` | Boş medya yanıtı, gizli/silinmiş gönderi veya giriş duvarı | `true` |
 | `IG_RATE_LIMIT` | Instagram IP tabanlı geçici hız sınırı | `true` |
+| `IG_ARAC_GUNCEL_DEGIL` | Instagram yanıtı ayrıştırılamadı (`yt-dlp` güncellemesi gerekebilir; ayrıntı `detail`'de) | `true` |
 | `IG_VIDEO_DEGIL` | Çoklu gönderi (carousel) veya video içermeyen gönderi | `true` |
+| `IG_COOLDOWN` | `--no-wait` verildi ve 15 sn bekleme dolmadı (`retry_after_s` içerir) | `true` |
 | `DOSYA_BUYUK` | Video boyutu sınırı aşıyor (varsayılan 200 MB) | `true` |
-| `VIDEO_UZUN` | Video süresi sınırı aşıyor (varsayılan 180 sn; dosya silinir) | `true` |
-| `IG_ARAC_GUNCEL_DEGIL` | Beklenmeyen ayrıştırma hatası (`yt-dlp` güncellemesi gerekir) | `true` |
-| `FFPROBE_YOK` | `ffprobe` yürütülebilir dosyası bulunamadı | `true` |
-| `DOSYA_BOZUK` | İndirilen dosya `ffprobe` ile okunamadı | `true` |
-| `IG_INDIRME_HATASI` | Diğer ağ veya indirme hataları | `true` |
+| `VIDEO_UZUN` | Video süresi sınırı aşıyor (varsayılan **185 sn**; dosya silinir) | `true` |
+| `DOSYA_BOZUK` | İndirilen dosya okunamadı veya süresi geçersiz | `true` |
+| `KAYNAK_GECICI` | Ağ/aktarım hatası ve video dosyasının oluşmadığı diğer geçici hatalar | `true` |
+| `FFPROBE_YOK` | `ffprobe` bulunamadı (kurulum eksik) | `false` |
+| `ARG_GECERSIZ` | Geçersiz/eksik komut satırı argümanı, `--cooldown` < 15 | `false` |
+| `SILME_HATASI` | `cleanup` dosyayı silemedi | `false` |
+| `BEKLENMEYEN_HATA` | Yakalanmamış istisna (`detail`: `<İstisnaTürü>: <mesaj>`), iptal, kilit alınamadı | `false` |
 
 ## Yeni Site Ekleme (Genişletilebilirlik)
 

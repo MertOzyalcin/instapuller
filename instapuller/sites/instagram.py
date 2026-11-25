@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from instapuller.models import ParsedLink, PullError, SourceMeta
-from instapuller.sanitize import sanitize_detail
+from instapuller.models import TOOL_OUTDATED_DETAIL, ParsedLink, PullError, SourceMeta
+from instapuller.sanitize import MAX_DETAIL_LEN, sanitize_detail
 
 _IG_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,}$")
 _IG_HOSTS = frozenset({"instagram.com"})
@@ -38,6 +38,12 @@ def _iso_utc(ts: Any) -> str | None:
     return None
 
 
+def _outdated_detail(raw_msg: str, allowed_paths: Iterable[str | Path]) -> str:
+    budget = MAX_DETAIL_LEN - len(TOOL_OUTDATED_DETAIL) - len(" Orijinal hata: ")
+    original = sanitize_detail(raw_msg, max_len=max(budget, 0), allowed_paths=allowed_paths)
+    return f"{TOOL_OUTDATED_DETAIL} Orijinal hata: {original}" if original else TOOL_OUTDATED_DETAIL
+
+
 class InstagramAdapter:
     site_id = "instagram"
     hosts = _IG_HOSTS
@@ -47,8 +53,7 @@ class InstagramAdapter:
         if not raw:
             raise PullError(
                 "LINK_GECERSIZ",
-                "Geçersiz Instagram linki. Bir Instagram Reel veya tekil video linki girin.",
-                upload_fallback=True,
+                "Geçersiz Instagram linki. Bir Reel veya tekil video linki girin ya da videoyu dosya olarak yükleyin.",
             )
         if "://" not in raw:
             raw = "https://" + raw
@@ -57,15 +62,13 @@ class InstagramAdapter:
         except ValueError:
             raise PullError(
                 "LINK_GECERSIZ",
-                "Geçersiz Instagram linki. Bir Instagram Reel veya tekil video linki girin.",
-                upload_fallback=True,
+                "Geçersiz Instagram linki. Bir Reel veya tekil video linki girin ya da videoyu dosya olarak yükleyin.",
             ) from None
 
         if parts.scheme not in ("http", "https") or _normalize_host(parts.hostname) not in self.hosts:
             raise PullError(
                 "LINK_GECERSIZ",
-                "Geçersiz Instagram linki. Bir Instagram Reel veya tekil video linki girin.",
-                upload_fallback=True,
+                "Geçersiz Instagram linki. Bir Reel veya tekil video linki girin ya da videoyu dosya olarak yükleyin.",
             )
 
         segs = [s for s in parts.path.split("/") if s]
@@ -99,8 +102,7 @@ class InstagramAdapter:
 
         raise PullError(
             "LINK_GECERSIZ",
-            "Bu Instagram linki desteklenmiyor. Yalnızca tekil Reel veya video gönderisi linki girin.",
-            upload_fallback=True,
+            "Bu Instagram linki desteklenmiyor. Tekil bir Reel veya video linki girin ya da videoyu dosya olarak yükleyin.",
         )
 
     def map_error(
@@ -133,7 +135,6 @@ class InstagramAdapter:
                 "IG_RATE_LIMIT",
                 "Instagram bu IP adresinden gelen istekleri geçici olarak kısıtladı. "
                 "Bir süre sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
                 detail=detail,
             )
 
@@ -150,7 +151,6 @@ class InstagramAdapter:
             return PullError(
                 "DOSYA_BUYUK",
                 "Video izin verilen dosya boyutu sınırını aşıyor. Videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
                 detail=detail,
             )
 
@@ -167,7 +167,6 @@ class InstagramAdapter:
             return PullError(
                 "IG_VIDEO_DEGIL",
                 "Bu gönderide indirilebilir tekil bir video bulunamadı. Videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
                 detail=detail,
             )
 
@@ -193,7 +192,6 @@ class InstagramAdapter:
                 "IG_ERISILEMEDI",
                 "Bu gönderiye erişilemedi (gizli, silinmiş ya da giriş gerekiyor olabilir). "
                 "Videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
                 detail=detail,
             )
 
@@ -211,18 +209,14 @@ class InstagramAdapter:
         ):
             return PullError(
                 "IG_ARAC_GUNCEL_DEGIL",
-                "Instagram yanıtı ayrıştırılamadı; yt-dlp güncel olmayabilir. "
-                "README'deki güncelleme komutunu çalıştırın veya videoyu dosya olarak yükleyin.",
-                upload_fallback=True,
-                detail=detail,
+                "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin.",
+                detail=_outdated_detail(raw_msg, allowed_paths),
             )
 
         # 6. Diğer ağ / indirme hataları
         return PullError(
-            "IG_INDIRME_HATASI",
-            "Video indirilirken bir ağ veya aktarım hatası oluştu. "
-            "Tekrar deneyin veya videoyu dosya olarak yükleyin.",
-            upload_fallback=True,
+            "KAYNAK_GECICI",
+            "Video şu anda indirilemedi. Biraz sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
             detail=detail,
         )
 

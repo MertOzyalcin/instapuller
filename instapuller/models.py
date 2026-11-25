@@ -45,23 +45,50 @@ class SourceMeta:
         }
 
 
+# Tek doğruluk kaynağı: hata kodu -> upload_fallback.
+ERROR_CODES: dict[str, bool] = {
+    "LINK_GECERSIZ": True,
+    "IG_ERISILEMEDI": True,
+    "IG_RATE_LIMIT": True,
+    "IG_ARAC_GUNCEL_DEGIL": True,
+    "IG_VIDEO_DEGIL": True,
+    "IG_COOLDOWN": True,
+    "DOSYA_BUYUK": True,
+    "VIDEO_UZUN": True,
+    "DOSYA_BOZUK": True,
+    "KAYNAK_GECICI": True,
+    "FFPROBE_YOK": False,
+    "ARG_GECERSIZ": False,
+    "SILME_HATASI": False,
+    "BEKLENMEYEN_HATA": False,
+}
+
+
+# IG_ARAC_GUNCEL_DEGIL için teknik açıklama (kullanıcı mesajına girmez, detail'e gider).
+TOOL_OUTDATED_DETAIL = "yt-dlp güncel olmayabilir; README'deki güncelleme adımına bakın."
+
+
 class PullError(Exception):
-    """autocript SourceError sözleşmesine uyumlu yapılandırılmış hata."""
+    """autocript SourceError sözleşmesine uyumlu yapılandırılmış hata.
+
+    upload_fallback değeri ERROR_CODES tablosundan okunur; tabloda olmayan kod ValueError verir.
+    """
 
     def __init__(
         self,
         code: str,
         message: str,
         *,
-        upload_fallback: bool = True,
         detail: str | None = None,
         retry_after_s: float | None = None,
     ):
+        if code not in ERROR_CODES:
+            raise ValueError(f"Bilinmeyen hata kodu: {code!r}")
         text = f"{code}: {message}" + (f" | {detail}" if detail else "")
         super().__init__(text)
         self.code = code
         self.message = message
-        self.upload_fallback = upload_fallback
+        self.upload_fallback: bool = ERROR_CODES[code]
         self.detail = detail
         self.retry_after_s = retry_after_s
 
