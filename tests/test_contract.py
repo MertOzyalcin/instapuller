@@ -38,7 +38,7 @@ class FakeYDL:
 
     def process_ie_result(self, info: dict[str, Any], download: bool = True):
         if download and self.write_bytes is not None:
-            out_path = Path(self.opts["outtmpl"].replace("%(ext)s", "mp4"))
+            out_path = Path(self.opts["paths"]["home"]) / self.opts["outtmpl"].replace("%(ext)s", "mp4")
             out_path.write_bytes(b"\x00" * self.write_bytes)
         return info
 
@@ -46,6 +46,7 @@ class FakeYDL:
 def _sample_info() -> dict[str, Any]:
     return {
         "id": "Chunk8-jurw",
+        "extractor_key": "Instagram",
         "uploader": "Instagram",
         "channel": "instagram",
         "title": "Video by instagram",

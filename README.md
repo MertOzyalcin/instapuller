@@ -156,6 +156,15 @@ Kod listesi tek bir tabloda tutulur (`instapuller/models.py` → `ERROR_CODES`);
 | `SILME_HATASI` | `cleanup` dosyayı silemedi | `false` |
 | `BEKLENMEYEN_HATA` | Yakalanmamış istisna (`detail`: `<İstisnaTürü>: <mesaj>`), iptal, kilit alınamadı | `false` |
 
+## Davranış Notları
+
+- **Boyut sınırı indirme sırasında uygulanır** (varsayılan 200 MB): `Content-Length` bildirilse de bildirilmese de, sınır aşıldığı anda indirme kesilir ve `DOSYA_BUYUK` döner; yarım dosya silinir.
+- **Format seçimi:** `format` değeri `mp4/best`'tir; yalnızca ses ve görüntüsü **tek dosyada** olan formatlar seçilir, ffmpeg ile birleştirme yapılmaz. Yalnızca DASH (ayrı ses/görüntü) sunulan gönderiler `IG_VIDEO_DEGIL` döner.
+- **Yalnızca Instagram çıkarıcısı** yüklenir; başka bir çıkarıcıdan yanıt gelirse `IG_ARAC_GUNCEL_DEGIL` döner.
+- **Eski staging klasörleri:** her `fetch` başında hedef klasördeki 1 saatten eski `ip_*` klasörleri (öldürülmüş önceki çağrılardan kalanlar) sessizce silinir.
+- **`cleanup`** yalnızca instapuller'ın ürettiği geçici adları (`<kod>_<8 hex>.<mp4|mov|webm|mkv|m4v>`) siler; başka dosyalar için `SILME_HATASI` döner. `--keep-video` ile saklanan dosyalar bu adı taşımaz, bu komutla silinmez.
+- **Link denetimi:** kullanıcı bilgisi (`kullanici@...`), 80/443 dışı port ve yalnızca `-`/`_` içeren kodlar `LINK_GECERSIZ` döner.
+
 ## Yeni Site Ekleme (Genişletilebilirlik)
 
 Şu anda izin listesinde (`instapuller/sites/__init__.py` → `ALLOWED_SITES`) yalnızca `instagram.com` yer alır. İleride yeni bir platform (ör. YouTube) eklemek için `instapuller/sites/` altına `SiteAdapter` protokolünü uygulayan yeni bir modül ekleyip `ALLOWED_SITES` sözlüğüne kaydetmek yeterlidir.

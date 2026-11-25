@@ -6,13 +6,14 @@ import re
 import secrets
 import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yt_dlp
 
-from instapuller.models import TOOL_OUTDATED_DETAIL, PullError, PullResult
+from instapuller.models import TOOL_OUTDATED_DETAIL, PullError, PullResult, SizeLimitExceeded
 from instapuller.probe import probe_duration
 from instapuller.rate_limit import (
     DEFAULT_COOLDOWN_S,
@@ -24,6 +25,9 @@ from instapuller.sites import parse_url
 
 DEFAULT_MAX_DURATION_S = 185.0
 DEFAULT_MAX_FILESIZE_MB = 200
+STAGING_PREFIX = "ip_"
+STALE_STAGING_AGE_S = 3600.0  # bundan eski ip_* staging klasörleri silinir
+_PARTIAL_SUFFIXES = (".part", ".ytdl", ".temp")
 
 _SAFE_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -40,17 +44,83 @@ def _safe_slug(text: str | None) -> str:
 
 
 class _SilentLogger:
+    """Hiçbir şey basmaz; yalnızca yt-dlp'nin "max-filesize" atlama satırını bayrakla kaydeder."""
+
+    def __init__(self) -> None:
+        self.size_exceeded = False
+
+    def _note(self, msg: str) -> None:
+        if "larger than max-filesize" in str(msg):
+            self.size_exceeded = True
+
     def debug(self, msg: str) -> None:
-        pass
+        self._note(msg)
 
     def info(self, msg: str) -> None:
-        pass
+        self._note(msg)
 
     def warning(self, msg: str) -> None:
-        pass
+        self._note(msg)
 
     def error(self, msg: str) -> None:
-        pass
+        self._note(msg)
+
+
+def _make_size_hook(max_bytes: int) -> Callable[[dict[str, Any]], None]:
+    def hook(status: dict[str, Any]) -> None:
+        for key in ("downloaded_bytes", "total_bytes", "total_bytes_estimate"):
+            val = status.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and val > max_bytes:
+                raise SizeLimitExceeded(f"{key}={int(val)} > {max_bytes}")
+
+    return hook
+
+
+def _purge_stale_staging(target_dir: Path) -> None:
+    """Önceki (öldürülmüş) çağrılardan kalan eski ip_* staging klasörlerini sessizce siler."""
+    cutoff = time.time() - STALE_STAGING_AGE_S
+    try:
+        entries = list(target_dir.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if (
+                entry.name.startswith(STAGING_PREFIX)
+                and entry.is_dir()
+                and not entry.is_symlink()
+                and entry.stat().st_mtime < cutoff
+            ):
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def _find_downloaded_file(result: Any, info: Any, staging_dir: Path) -> Path | None:
+    """yt-dlp'nin bildirdiği dosya yolunu (requested_downloads) kullanır; yoksa klasörü tarar."""
+    for source in (result, info):
+        if not isinstance(source, dict):
+            continue
+        candidates: list[Any] = []
+        reqs = source.get("requested_downloads")
+        if isinstance(reqs, list):
+            candidates.extend(r.get("filepath") for r in reqs if isinstance(r, dict))
+        candidates.append(source.get("filepath"))
+        for cand in candidates:
+            if not cand:
+                continue
+            p = Path(cand)
+            try:
+                if p.is_file() and p.resolve().parent == staging_dir.resolve():
+                    return p
+            except OSError:
+                continue
+    files = sorted(
+        p
+        for p in staging_dir.iterdir()
+        if p.is_file() and not p.name.endswith(_PARTIAL_SUFFIXES) and ".part-Frag" not in p.name
+    )
+    return files[0] if files else None
 
 
 def _default_ydl_factory(opts: dict[str, Any]) -> Any:
@@ -70,6 +140,13 @@ def _check_carousel_or_non_video(info: Any) -> None:
             "IG_VIDEO_DEGIL",
             "Çoklu gönderiler (carousel) desteklenmiyor; yalnızca tekil video veya Reel linki girin. "
             "Videoyu dosya olarak yükleyin.",
+        )
+
+    if info.get("extractor_key") != "Instagram":
+        raise PullError(
+            "IG_ARAC_GUNCEL_DEGIL",
+            "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin.",
+            detail=f"{TOOL_OUTDATED_DETAIL} Beklenmeyen çıkarıcı: {str(info.get('extractor_key'))[:40]}",
         )
 
     vcodec = info.get("vcodec")
@@ -123,16 +200,22 @@ def fetch_video(
         target_dir = Path(tempfile.gettempdir()) / "instapuller"
 
     target_dir.mkdir(parents=True, exist_ok=True)
+    _purge_stale_staging(target_dir)
     allowed_paths = [target_dir]
     max_bytes = max(1, int(max_filesize_mb)) * 1024 * 1024
 
     # 4. Geçici çalışma klasörü içinde indirme (hata olursa temiz bırakır)
-    staging_dir = Path(tempfile.mkdtemp(prefix=f"ip_{parsed.platform_id}_", dir=target_dir))
+    staging_dir = Path(tempfile.mkdtemp(prefix=f"{STAGING_PREFIX}{parsed.platform_id}_", dir=target_dir))
     final_path: Path | None = None
 
     try:
+        logger = _SilentLogger()
         ydl_opts: dict[str, Any] = {
-            "outtmpl": str(staging_dir / f"{parsed.platform_id}.%(ext)s"),
+            # Klasör outtmpl'e girmez (klasör adındaki % karakterleri şablon sayılmasın)
+            "paths": {"home": str(staging_dir), "temp": str(staging_dir)},
+            "outtmpl": f"{parsed.platform_id}.%(ext)s",
+            "allowed_extractors": ["Instagram"],
+            "progress_hooks": [_make_size_hook(max_bytes)],
             "format": "mp4/best",
             "max_filesize": max_bytes,
             "noplaylist": True,
@@ -141,7 +224,7 @@ def fetch_video(
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
-            "logger": _SilentLogger(),
+            "logger": logger,
         }
 
         try:
@@ -153,14 +236,14 @@ def fetch_video(
                         "DOSYA_BUYUK",
                         f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
                     )
-                ydl.process_ie_result(info, download=True)
+                result = ydl.process_ie_result(info, download=True)
         except Exception as exc:
             raise adapter.map_error(exc, allowed_paths=allowed_paths) from None
 
-        downloaded = [p for p in staging_dir.iterdir() if p.is_file() and not p.name.endswith(".part")]
-        if not downloaded:
-            # yt-dlp max_filesize aşıldığında sessizce atlayabilir
-            if _exceeds_precheck_filesize(info, max_bytes):
+        staged_file = _find_downloaded_file(result, info, staging_dir)
+        if staged_file is None:
+            # yt-dlp max_filesize aşıldığında istisna fırlatmadan dosyayı atlayabilir
+            if logger.size_exceeded or _exceeds_precheck_filesize(info, max_bytes):
                 raise PullError(
                     "DOSYA_BUYUK",
                     f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
@@ -171,7 +254,6 @@ def fetch_video(
                 detail="İndirme tamamlandı ama klasörde video dosyası oluşmadı (boyut sınırına takılmış veya boş yanıt olabilir).",
             )
 
-        staged_file = downloaded[0]
         if staged_file.stat().st_size > max_bytes:
             raise PullError(
                 "DOSYA_BUYUK",

@@ -68,6 +68,10 @@ ERROR_CODES: dict[str, bool] = {
 TOOL_OUTDATED_DETAIL = "yt-dlp güncel olmayabilir; README'deki güncelleme adımına bakın."
 
 
+class SizeLimitExceeded(Exception):
+    """İndirme sırasında boyut sınırı aşıldığında progress hook'tan fırlatılan iç istisna."""
+
+
 class PullError(Exception):
     """autocript SourceError sözleşmesine uyumlu yapılandırılmış hata.
 

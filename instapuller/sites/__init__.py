@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from instapuller.models import ParsedLink, PullError
 from instapuller.sites.base import SiteAdapter
 from instapuller.sites.instagram import InstagramAdapter
+from instapuller.sites.urlcheck import authority_is_clean
 
 ALLOWED_SITES: dict[str, SiteAdapter] = {
     "instagram": InstagramAdapter(),
@@ -54,6 +55,12 @@ def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
         raise PullError(
             "LINK_GECERSIZ",
             "Yalnızca web linkleri desteklenir. Videoyu dosya olarak yükleyin.",
+        )
+
+    if not authority_is_clean(parts):
+        raise PullError(
+            "LINK_GECERSIZ",
+            "Link biçimi geçersiz. Instagram linki girin veya videoyu dosya olarak yükleyin.",
         )
 
     host = _normalize_host(parts.hostname)
