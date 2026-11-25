@@ -5,6 +5,12 @@ JSON çıktılı CLI (`subprocess`) ve doğrudan import edilebilir Python API su
 
 > **Güvenlik ve Sınırlar:** Oturum/giriş kullanılmaz; **hesap riski yok, IP geçici olarak kısıtlanabilir.** Bu riski azaltmak için ardışık istekler arasında varsayılan **15 saniye** bekleme (cooldown) uygulanır.
 
+## Kullanım ve Sorumluluk
+
+- Bu araç **kişisel kullanım** içindir.
+- Instagram'ın [Kullanım Şartları](https://help.instagram.com/581066165581870)'na ve içeriklerin **telif haklarına** uymak tamamen kullanıcının sorumluluğundadır. Hakkınız olmayan içeriği indirmeyin, yeniden yayımlamayın.
+- Araç **hesap ya da çerez kullanmaz**: giriş yapılmaz, oturum bilgisi okunmaz; yalnızca herkese açık gönderilere erişilebilir.
+
 ## Kurulum
 
 ```bash
