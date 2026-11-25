@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "instapuller"
+version = "0.1.0"
+description = "Yerel uygulamalar için anonim Instagram video/Reel indirme ve metrik aracı"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "yt-dlp==2026.11.23",
+]
+
+[project.scripts]
+instapuller = "instapuller.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
