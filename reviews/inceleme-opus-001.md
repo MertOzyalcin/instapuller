@@ -244,3 +244,47 @@ Bulgu ilk kez kapanmadıysa, kapanış turu "Durum" sütununda belirtildi. Testl
 - **POSIX kilidi:** `fcntl.flock` yolu yalnızca Windows'ta dolaylı olarak sınandı, POSIX'te doğrulanmadı.
 - **Staging temizliğinin kapsamı:** `--keep-video` ile kullanıcının kendi klasörü `--out-dir` olarak verilirse oradaki 1 saatten eski `ip_*` klasörleri de silinir. Bunlar yalnızca instapuller'ın ürettiği klasörlerdir.
 - **Entegrasyonda dikkat:** Bu bölümün maddeleri sonraki aşamaya kaldı; autocript'e dokunulmadı. 4. madde (Instagram işlerini tek kilitle sıraya koyma) artık zorunlu değil, ancak derinlemesine savunma olarak önerilmeye devam ediyor.
+
+---
+
+## Ö8 ölçümü (2026-11-25, gerçek Instagram)
+
+### Kurulum
+- Anonim mod kullanıldı; hesap ya da çerez yok.
+- 5 Reel × 2 kurulum = 10 istek atıldı. Ortak state dosyasıyla `--wait` kullanıldı, yani istekler arasında en az 15 sn vardı. Yeniden deneme yapılmadı.
+- İnen her video ölçümden hemen sonra silindi; geride dosya kalmadı.
+- Karşılaştırılan iki kurulum:
+  - **a)** `C:\instapuller\.venv`: yalnız `yt-dlp==2026.11.23`, tarayıcı taklidi hedefi yok.
+  - **b)** Geçici bir ortam (scratchpad): `yt-dlp[default,curl-cffi]==2026.11.23`, curl_cffi 0.17.0, Chrome/Safari taklit hedefleri var.
+- İki kurulum da aynı instapuller kaynağını çalıştırdı. Ana `pyproject.toml`'a dokunulmadı.
+
+### Reel seçimi
+- Önceden denenmiş 5 Türkçe Reel'in kaydı bulunamadı. agent-hub'daki 17 Reel'in hiçbiri Türkçe değil.
+- Kullanıcının onayıyla agent-hub'dan farklı tarihli 4 Reel (2022 ve 2026) ve kullanıcının verdiği `DfNZKLuuJzj` kullanıldı.
+- Videonun dili indirme başarısını etkilemez.
+
+### Sonuç
+
+| Reel | a) yalnız yt-dlp | b) + curl-cffi |
+|---|---|---|
+| `CdObaw4lSEv` | Başarılı (16,2 sn, 4,4 MB) | Başarılı |
+| `ChdDfH5pzou` | Başarılı (9,9 sn, 0,6 MB) | Başarılı |
+| `Df1WHMMpXUE` | Başarılı (87,4 sn, 6,3 MB) | Başarılı |
+| `DfxLz0yAU6_` | Başarılı (20,0 sn, 3,2 MB) | Başarılı |
+| `DfNZKLuuJzj` | Başarılı (163,3 sn, 24,4 MB) | `KAYNAK_GECICI`: curl DNS çözümleme zaman aşımı (20 sn) |
+| **Toplam** | **5/5** | **4/5** |
+
+- Bütün başarılı sonuçlarda meta alanları (beğeni sayısı dahil) doldu.
+- b'nin tek hatası Instagram engeli değil, curl'ün ağ ve DNS katmanında oluştu. Hata doğru biçimde `KAYNAK_GECICI` olarak sınıflandı. yt-dlp uyarısı hem `detail` alanında hem stderr'de göründü, yani Ö8'in ikinci yarısının sahada çalıştığı doğrulandı.
+- b her istekte belirgin biçimde daha yavaştı.
+
+### Karar
+**curl-cffi eklenmedi.** Bu örneklemde anonim indirme taklit olmadan 5/5 başarılı oldu ve taklidin bir faydası görülmedi. Instagram yanıt biçimini değiştirir ya da giriş duvarı sıklaşırsa ölçüm aynı betikle tekrarlanmalı.
+
+### Ö8'in ikinci yarısı
+- **Düzeltildi.** yt-dlp'nin warning ve error satırları artık yutulmuyor.
+  - stderr'e `instapuller: yt-dlp uyarısı: ...` olarak, yolları maskelenmiş biçimde yazılıyor. `INSTAPULLER_QUIET=1` stderr yazımını kapatır.
+  - Hata durumunda `detail` sonuna ekleniyor: en fazla 10 satır, toplam en fazla 500 karakter.
+  - stdout yalnızca JSON kalıyor.
+- Testler `tests/test_download_integration.py` içinde 7 yeni test (uyarının stderr'e ve `detail`'e gitmesi, `INSTAPULLER_QUIET`, 500 karakter sınırı, gerçek `YoutubeDL.report_warning`).
+- Ayrıca `tests/_helpers.py` artık ffmpeg'i `INSTAPULLER_FFPROBE_BIN` ile aynı klasörde de arıyor. Yalnız `INSTAPULLER_FFPROBE_BIN` verilince **125/125** geçiyor; hiçbir değişken yokken 123 geçiyor, 2 test atlanıyor.

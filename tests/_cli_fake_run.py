@@ -3,6 +3,7 @@
 Kullanım: python tests/_cli_fake_run.py fetch <url> --out-dir <klasör> ...
 """
 
+import os
 import sys
 from functools import partial
 from pathlib import Path
@@ -27,6 +28,11 @@ class _FakeYDL:
         return False
 
     def extract_info(self, url, download=False):
+        warn = os.environ.get("INSTAPULLER_FAKE_WARN")
+        if warn:
+            self.opts["logger"].warning(warn)
+        if os.environ.get("INSTAPULLER_FAKE_FAIL"):
+            raise RuntimeError("HTTP Error 500: Internal Server Error")
         return {
             "id": "Chunk8-jurw",
             "extractor_key": "Instagram",

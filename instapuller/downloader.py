@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import shutil
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -15,6 +17,7 @@ import yt_dlp
 
 from instapuller.models import TOOL_OUTDATED_DETAIL, PullError, PullResult, SizeLimitExceeded
 from instapuller.probe import probe_duration
+from instapuller.sanitize import MAX_DETAIL_LEN, sanitize_detail
 from instapuller.rate_limit import (
     DEFAULT_COOLDOWN_S,
     MIN_COOLDOWN_S,
@@ -43,15 +46,45 @@ def _safe_slug(text: str | None) -> str:
     return cleaned[:40]
 
 
+_ANSI_RE = re.compile(r"\[[0-9;]*[A-Za-z]")
+MAX_WARNING_LINES = 10
+MAX_WARNING_LEN = 200
+WARNINGS_LABEL = " | yt-dlp uyarıları: "
+
+
+def _quiet_stderr() -> bool:
+    return os.environ.get("INSTAPULLER_QUIET", "").strip() == "1"
+
+
 class _SilentLogger:
-    """Hiçbir şey basmaz; yalnızca yt-dlp'nin "max-filesize" atlama satırını bayrakla kaydeder."""
+    """stdout'a hiçbir şey basmaz. warning/error satırlarını tanı için biriktirir ve stderr'e yazar.
+
+    "max-filesize" atlama satırını ayrıca bayrakla kaydeder.
+    """
 
     def __init__(self) -> None:
         self.size_exceeded = False
+        self.warnings: list[str] = []
 
     def _note(self, msg: str) -> None:
         if "larger than max-filesize" in str(msg):
             self.size_exceeded = True
+
+    def _diag(self, msg: object) -> None:
+        text = _ANSI_RE.sub("", str(msg))
+        clean = sanitize_detail(text, max_len=MAX_WARNING_LEN)
+        if not clean:
+            return
+        if len(self.warnings) < MAX_WARNING_LINES:
+            self.warnings.append(clean)
+        if _quiet_stderr():
+            return
+        try:
+            if hasattr(sys.stderr, "reconfigure"):
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            print(f"instapuller: yt-dlp uyarısı: {clean}", file=sys.stderr, flush=True)
+        except Exception:
+            pass
 
     def debug(self, msg: str) -> None:
         self._note(msg)
@@ -61,9 +94,27 @@ class _SilentLogger:
 
     def warning(self, msg: str) -> None:
         self._note(msg)
+        self._diag(msg)
 
     def error(self, msg: str) -> None:
         self._note(msg)
+        self._diag(msg)
+
+
+def _with_warnings(err: PullError, logger: _SilentLogger, allowed_paths: list[Path]) -> PullError:
+    """Biriken yt-dlp uyarılarını detail sonuna ekler (orijinal metin öncelikli, toplam <= 500)."""
+    if not logger.warnings:
+        return err
+    base = err.detail or ""
+    prefix = base + WARNINGS_LABEL if base else WARNINGS_LABEL.lstrip(" |").lstrip()
+    room = MAX_DETAIL_LEN - len(prefix)
+    if room < 10:
+        return err
+    extra = " ; ".join(logger.warnings)
+    if len(extra) > room:
+        extra = extra[: room - 3].rstrip() + "..."
+    err.detail = sanitize_detail(prefix + extra, allowed_paths=allowed_paths)
+    return err
 
 
 def _make_size_hook(max_bytes: int) -> Callable[[dict[str, Any]], None]:
@@ -238,21 +289,27 @@ def fetch_video(
                     )
                 result = ydl.process_ie_result(info, download=True)
         except Exception as exc:
-            raise adapter.map_error(exc, allowed_paths=allowed_paths) from None
+            raise _with_warnings(
+                adapter.map_error(exc, allowed_paths=allowed_paths), logger, allowed_paths
+            ) from None
 
         staged_file = _find_downloaded_file(result, info, staging_dir)
         if staged_file is None:
             # yt-dlp max_filesize aşıldığında istisna fırlatmadan dosyayı atlayabilir
             if logger.size_exceeded or _exceeds_precheck_filesize(info, max_bytes):
-                raise PullError(
-                    "DOSYA_BUYUK",
-                    f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
+                raise _with_warnings(
+                    PullError(
+                        "DOSYA_BUYUK",
+                        f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
+                    ),
+                    logger,
+                    allowed_paths,
                 )
-            raise PullError(
+            raise _with_warnings(PullError(
                 "KAYNAK_GECICI",
                 "Video şu anda indirilemedi. Biraz sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
                 detail="İndirme tamamlandı ama klasörde video dosyası oluşmadı (boyut sınırına takılmış veya boş yanıt olabilir).",
-            )
+            ), logger, allowed_paths)
 
         if staged_file.stat().st_size > max_bytes:
             raise PullError(

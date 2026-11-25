@@ -165,6 +165,8 @@ Kod listesi tek bir tabloda tutulur (`instapuller/models.py` → `ERROR_CODES`);
 - **`cleanup`** yalnızca instapuller'ın ürettiği geçici adları (`<kod>_<8 hex>.<mp4|mov|webm|mkv|m4v>`) siler; başka dosyalar için `SILME_HATASI` döner. `--keep-video` ile saklanan dosyalar bu adı taşımaz, bu komutla silinmez.
 - **Link denetimi:** kullanıcı bilgisi (`kullanici@...`), 80/443 dışı port ve yalnızca `-`/`_` içeren kodlar `LINK_GECERSIZ` döner.
 
+- **yt-dlp uyarıları (tanı):** yt-dlp'nin `warning`/`error` satırları (en fazla 10 satır, her biri en çok 200 karakter, yerel yollar `[path]` ile maskeli) şu iki yere gider: (1) stderr'e `instapuller: yt-dlp uyarısı: ...` biçiminde (UTF-8); (2) hata olursa `detail` alanının sonuna ` | yt-dlp uyarıları: ...` olarak eklenir (orijinal hata metni öncelikli, toplam 500 karakteri aşmaz). Başarıda uyarılar yalnızca stderr'e yazılır; JSON çıktısı değişmez. **stdout'a asla uyarı yazılmaz** (yalnızca tek satır JSON). stderr yalnızca tanı içindir, `autocript` onu ayrıştırmamalı ama günlüğe (log) yazmalıdır. `INSTAPULLER_QUIET=1` stderr yazımını kapatır (`detail` eklemesi sürer).
+
 ## Yeni Site Ekleme (Genişletilebilirlik)
 
 Şu anda izin listesinde (`instapuller/sites/__init__.py` → `ALLOWED_SITES`) yalnızca `instagram.com` yer alır. İleride yeni bir platform (ör. YouTube) eklemek için `instapuller/sites/` altına `SiteAdapter` protokolünü uygulayan yeni bir modül ekleyip `ALLOWED_SITES` sözlüğüne kaydetmek yeterlidir.
@@ -174,3 +176,5 @@ Kod listesi tek bir tabloda tutulur (`instapuller/models.py` → `ERROR_CODES`);
 ```bash
 uv run pytest
 ```
+
+Video üreten testler için ffmpeg gerekir: `INSTAPULLER_TEST_FFMPEG`, `PATH` ya da `INSTAPULLER_FFPROBE_BIN` ile aynı klasördeki `ffmpeg(.exe)` aranır; bulunamazsa o testler atlanır.

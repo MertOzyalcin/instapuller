@@ -124,6 +124,15 @@ def find_tool(env_names: tuple[str, ...], exe: str) -> str:
 
 
 def find_ffmpeg() -> str:
+    val = os.environ.get("INSTAPULLER_TEST_FFMPEG")
+    if val and Path(val).is_file():
+        return val
+    probe = os.environ.get("INSTAPULLER_FFPROBE_BIN")
+    if probe:
+        for name in ("ffmpeg.exe", "ffmpeg"):
+            cand = Path(probe).parent / name
+            if cand.is_file():
+                return str(cand)
     return find_tool(("INSTAPULLER_TEST_FFMPEG",), "ffmpeg")
 
 

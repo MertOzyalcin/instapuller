@@ -516,3 +516,121 @@ def test_map_error_real_messages_and_exception_types(name, exc, code):
     err = InstagramAdapter().map_error(exc)
     assert err.code == code, (name, err.code, err.message, err.detail)
     assert err.upload_fallback is True
+
+
+# --- yt-dlp uyarılarının tanı için saklanması --------------------------------
+
+
+def _run_fake_cli(tmp_path, extra_env):
+    env = {**os.environ, "PYTHONPATH": str(ROOT), **extra_env}
+    env.pop("INSTAPULLER_QUIET", None) if "INSTAPULLER_QUIET" not in extra_env else None
+    return subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "_cli_fake_run.py"), "fetch", URL, "--out-dir", str(tmp_path / "o")],
+        capture_output=True,
+        cwd=str(ROOT),
+        env=env,
+        timeout=60,
+    )
+
+
+_WARN = r"Unable to extract thing; C:\Users\mert\secret\dir\x.json is odd"
+
+
+def test_cli_warning_goes_to_stderr_only_and_stdout_stays_single_json(tmp_path):
+    proc = _run_fake_cli(tmp_path, {"INSTAPULLER_FAKE_WARN": _WARN})
+    assert proc.returncode == 0
+    lines = proc.stdout.decode("utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["ok"] is True
+    err = proc.stderr.decode("utf-8", "replace")
+    assert "instapuller: yt-dlp uyarısı: Unable to extract thing" in err
+    assert "mert" not in err and "[path]" in err
+
+
+def test_cli_quiet_env_silences_stderr(tmp_path):
+    proc = _run_fake_cli(tmp_path, {"INSTAPULLER_FAKE_WARN": _WARN, "INSTAPULLER_QUIET": "1"})
+    assert proc.returncode == 0
+    assert proc.stderr == b""
+    assert len(proc.stdout.decode("utf-8").splitlines()) == 1
+
+
+def test_cli_failure_detail_has_warnings_even_when_quiet(tmp_path):
+    proc = _run_fake_cli(
+        tmp_path,
+        {"INSTAPULLER_FAKE_WARN": _WARN, "INSTAPULLER_FAKE_FAIL": "1", "INSTAPULLER_QUIET": "1"},
+    )
+    assert proc.returncode == 1
+    assert proc.stderr == b""
+    lines = proc.stdout.decode("utf-8").splitlines()
+    assert len(lines) == 1
+    detail = json.loads(lines[0])["error"]["detail"]
+    assert "yt-dlp uyarıları:" in detail and "Unable to extract thing" in detail
+    assert len(detail) <= 500 and "mert" not in detail and "[path]" in detail
+
+
+class _WarnFailYDL:
+    def __init__(self, opts):
+        self.opts = opts
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def extract_info(self, url, download=False):
+        for i in range(30):
+            self.opts["logger"].warning(f"uyari {i} " + "x" * 120)
+        self.opts["logger"].error(r"ERROR: D:\gizli\klasor\a.mp4 okunamadi")
+        raise RuntimeError("HTTP Error 500: Internal Server Error " + "y" * 300)
+
+
+def test_fetch_video_failure_detail_capped_and_original_first(tmp_path, capsys):
+    with pytest.raises(PullError) as ei:
+        fetch_video(
+            URL, out_dir=tmp_path / "o", limiter=NoWaitLimiter(), ydl_factory=_WarnFailYDL
+        )
+    detail = ei.value.detail
+    assert len(detail) <= 500
+    assert detail.startswith("HTTP Error 500")
+    assert "yt-dlp uyarıları: uyari 0" in detail
+    cap = capsys.readouterr()
+    assert cap.out == ""
+    assert cap.err.count("instapuller: yt-dlp uyarısı:") == 31  # stderr her satırı yazar; detail için yalnızca ilk 10 saklanır
+
+
+def test_logger_keeps_at_most_ten_and_shortens_and_ignores_debug(capsys, monkeypatch):
+    monkeypatch.setenv("INSTAPULLER_QUIET", "1")
+    lg = dl._SilentLogger()
+    lg.debug("d")
+    lg.info("i")
+    for i in range(25):
+        lg.warning("w" * 1000)
+    assert len(lg.warnings) == 10 and all(len(w) <= 200 for w in lg.warnings)
+    assert capsys.readouterr().err == ""
+
+
+def test_no_warnings_leaves_detail_untouched(tmp_path):
+    class Y(_WarnFailYDL):
+        def extract_info(self, url, download=False):
+            raise RuntimeError("HTTP Error 500: x")
+
+    with pytest.raises(PullError) as ei:
+        fetch_video(URL, out_dir=tmp_path / "o", limiter=NoWaitLimiter(), ydl_factory=Y)
+    assert "uyarıları" not in (ei.value.detail or "")
+
+
+def test_real_ytdlp_report_warning_reaches_logger(tmp_path, capsys):
+    base = real_ydl_factory(instagram_info("http://127.0.0.1:9/none.mp4"))
+
+    def factory(opts):
+        ydl = base(opts)
+        ydl.report_warning("gercek uyari 123")
+        raise_after = ydl
+        return raise_after
+
+    with pytest.raises(PullError) as ei:
+        fetch_video(URL, out_dir=tmp_path / "o", limiter=NoWaitLimiter(), ydl_factory=factory)
+    # report_warning logger üzerinden gitti; hata sonradan (bağlantı) geldiyse detail'de olmalı
+    assert "gercek uyari 123" in capsys.readouterr().err
+    assert "gercek uyari 123" in (ei.value.detail or "")
