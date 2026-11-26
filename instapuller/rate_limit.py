@@ -6,6 +6,7 @@ import contextlib
 import json
 import math
 import os
+import re
 import secrets
 import sys
 import time
@@ -21,6 +22,8 @@ LOCK_TIMEOUT_S = 10.0
 _LOCK_POLL_S = 0.05
 _REPLACE_ATTEMPTS = 20
 _REPLACE_POLL_S = 0.05
+DEFAULT_SITE = "instagram"
+_SITE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
 def default_state_file() -> Path:
@@ -77,9 +80,13 @@ class CooldownLimiter:
         state_file: Path,
         cooldown_s: float = DEFAULT_COOLDOWN_S,
         *,
+        site: str = DEFAULT_SITE,
         clock: Callable[[], float] = time.time,
         sleeper: Callable[[float], None] = time.sleep,
     ):
+        if not isinstance(site, str) or not _SITE_RE.fullmatch(site):
+            raise ValueError(f"Invalid site id: {site!r}")
+        self.site = site
         self.state_file = Path(state_file)
         # Safety: cannot go below 15 s (silently raised).
         self.cooldown_s = max(MIN_COOLDOWN_S, float(cooldown_s))
@@ -124,22 +131,38 @@ class CooldownLimiter:
             return float(val)
         return None
 
-    def _read_state(self) -> tuple[float | None, float | None]:
-        """Return (last_request_at, written_at); unreadable values are None."""
+    def _read_root(self) -> dict:
+        """Return the whole JSON state; unreadable or non-dict content counts as empty."""
         try:
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
-            return self._num(data.get("last_request_at")), self._num(data.get("written_at"))
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _read_state(self) -> tuple[float | None, float | None]:
+        """Return (last_request_at, written_at) for this site; unreadable values are None.
+
+        Instagram's record lives at the top level (compatible with older versions); every
+        other site is a nested record keyed by its site id.
+        """
+        root = self._read_root()
+        rec = root if self.site == DEFAULT_SITE else root.get(self.site)
+        if not isinstance(rec, dict):
             return None, None
+        return self._num(rec.get("last_request_at")), self._num(rec.get("written_at"))
 
     def _write_state(self, slot: float, written_at: float) -> None:
+        record = {"last_request_at": slot, "written_at": written_at}
+        root = self._read_root()  # preserve every other site's record
+        if self.site == DEFAULT_SITE:
+            root.update(record)
+        else:
+            root[self.site] = record
         tmp = self.state_file.with_name(
             f"{self.state_file.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
         )
         try:
-            tmp.write_text(
-                json.dumps({"last_request_at": slot, "written_at": written_at}), encoding="utf-8"
-            )
+            tmp.write_text(json.dumps(root), encoding="utf-8")
             for attempt in range(_REPLACE_ATTEMPTS):
                 try:
                     os.replace(tmp, self.state_file)

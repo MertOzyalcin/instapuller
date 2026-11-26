@@ -8,12 +8,13 @@ from instapuller.models import PullError
 from instapuller.rate_limit import CooldownLimiter
 
 state, start_at, wait = sys.argv[1], float(sys.argv[2]), sys.argv[3] == "wait"
+site = sys.argv[4] if len(sys.argv) > 4 else "instagram"
 while time.time() < start_at:
     time.sleep(0.005)
 
 out = {"t": None, "code": None, "error": None, "retry_after_s": None}
 try:
-    CooldownLimiter(state, cooldown_s=15.0).acquire(wait=wait)
+    CooldownLimiter(state, cooldown_s=15.0, site=site).acquire(wait=wait)
     out["t"] = time.time()
 except PullError as err:
     out["code"] = err.code
