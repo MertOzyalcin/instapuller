@@ -1,4 +1,4 @@
-"""Main download flow: URL validation → cooldown → yt-dlp → size/duration checks → contract."""
+"""Main download flow: URL validation → JS runtime (YouTube) → cooldown → yt-dlp → size/duration checks → contract."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from typing import Any
 
 import yt_dlp
 
-from instapuller.models import TOOL_OUTDATED_DETAIL, PullError, PullResult, SizeLimitExceeded
+from instapuller.jsruntime import resolve_js_runtime
+from instapuller.models import PullError, PullResult, SizeLimitExceeded
 from instapuller.probe import probe_duration
 from instapuller.sanitize import MAX_DETAIL_LEN, sanitize_detail
 from instapuller.rate_limit import (
@@ -25,6 +26,7 @@ from instapuller.rate_limit import (
     default_state_file,
 )
 from instapuller.sites import parse_url
+from instapuller.sites._common import fmt_seconds as _fmt_seconds
 
 DEFAULT_MAX_DURATION_S = 185.0
 DEFAULT_MAX_FILESIZE_MB = 200
@@ -33,10 +35,6 @@ STALE_STAGING_AGE_S = 3600.0  # ip_* staging directories older than this are rem
 _PARTIAL_SUFFIXES = (".part", ".ytdl", ".temp")
 
 _SAFE_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _fmt_seconds(value: float) -> str:
-    return str(int(value)) if float(value).is_integer() else str(round(value, 1))
 
 
 def _safe_slug(text: str | None) -> str:
@@ -178,36 +176,6 @@ def _default_ydl_factory(opts: dict[str, Any]) -> Any:
     return yt_dlp.YoutubeDL(opts)
 
 
-def _check_carousel_or_non_video(info: Any) -> None:
-    if not isinstance(info, dict):
-        raise PullError(
-            "IG_ARAC_GUNCEL_DEGIL",
-            "Instagram's response could not be read. Upload the video as a file instead.",
-            detail=TOOL_OUTDATED_DETAIL,
-        )
-
-    if info.get("_type") == "playlist" or isinstance(info.get("entries"), list):
-        raise PullError(
-            "IG_VIDEO_DEGIL",
-            "Carousel posts are not supported; enter a single video or Reel link. "
-            "Upload the video as a file instead.",
-        )
-
-    if info.get("extractor_key") != "Instagram":
-        raise PullError(
-            "IG_ARAC_GUNCEL_DEGIL",
-            "Instagram's response could not be read. Upload the video as a file instead.",
-            detail=f"{TOOL_OUTDATED_DETAIL} Unexpected extractor: {str(info.get('extractor_key'))[:40]}",
-        )
-
-    vcodec = info.get("vcodec")
-    if vcodec == "none" and not info.get("formats"):
-        raise PullError(
-            "IG_VIDEO_DEGIL",
-            "No downloadable video was found in this post. Upload the video as a file instead.",
-        )
-
-
 def _exceeds_precheck_filesize(info: dict[str, Any], max_bytes: int) -> bool:
     for key in ("filesize", "filesize_approx"):
         val = info.get(key)
@@ -227,6 +195,7 @@ def fetch_video(
     max_filesize_mb: int = DEFAULT_MAX_FILESIZE_MB,
     state_file: Path | str | None = None,
     ffprobe_bin: str | Path | None = None,
+    js_runtime_bin: str | Path | None = None,
     ydl_factory: Callable[[dict[str, Any]], Any] = _default_ydl_factory,
     duration_prober: Callable[..., float] = probe_duration,
     limiter: CooldownLimiter | None = None,
@@ -234,6 +203,11 @@ def fetch_video(
     """Anonymously download a single video from an allowed site and return an autocript-compatible result."""
     # 1. URL validation and site allowlist check (before any network request or cooldown)
     adapter, parsed = parse_url(url)
+
+    # 1b. JS runtime (only for sites that need one): fail before the cooldown slot and any network call
+    js_runtime = (
+        resolve_js_runtime(js_runtime_bin, ffprobe_bin=ffprobe_bin) if adapter.requires_js_runtime else None
+    )
 
     # 2. Back-to-back request protection (cooldown)
     active_limiter = limiter or CooldownLimiter(
@@ -262,12 +236,13 @@ def fetch_video(
     try:
         logger = _SilentLogger()
         ydl_opts: dict[str, Any] = {
+            **adapter.extra_ydl_opts(js_runtime),
             # The directory stays out of outtmpl (so % in its name is not read as a template)
             "paths": {"home": str(staging_dir), "temp": str(staging_dir)},
             "outtmpl": f"{parsed.platform_id}.%(ext)s",
-            "allowed_extractors": ["Instagram"],
+            "allowed_extractors": list(adapter.allowed_extractors),
             "progress_hooks": [_make_size_hook(max_bytes)],
-            "format": "mp4/best",
+            "format": adapter.format,
             "max_filesize": max_bytes,
             "noplaylist": True,
             "retries": 0,
@@ -281,7 +256,7 @@ def fetch_video(
         try:
             with ydl_factory(ydl_opts) as ydl:
                 info = ydl.extract_info(parsed.canonical_url, download=False)
-                _check_carousel_or_non_video(info)
+                adapter.check_info(info, max_duration_s, max_bytes)
                 if _exceeds_precheck_filesize(info, max_bytes):
                     raise PullError(
                         "DOSYA_BUYUK",

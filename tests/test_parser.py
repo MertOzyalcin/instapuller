@@ -6,9 +6,9 @@ from instapuller.models import PullError
 from instapuller.sites import ALLOWED_SITES, allowed_hosts, parse_url
 
 
-def test_allowlist_contains_only_instagram():
-    assert list(ALLOWED_SITES.keys()) == ["instagram"]
-    assert allowed_hosts() == frozenset({"instagram.com"})
+def test_allowlist_contains_instagram_and_youtube():
+    assert list(ALLOWED_SITES.keys()) == ["instagram", "youtube"]
+    assert allowed_hosts() == frozenset({"instagram.com", "youtube.com", "youtu.be"})
 
 
 @pytest.mark.parametrize(
@@ -60,8 +60,6 @@ def test_parse_valid_instagram_links(raw_url, expected_id, expected_kind, expect
     [
         "",
         "   ",
-        "https://www.youtube.com/shorts/dQw4w9WgXcQ",
-        "https://youtu.be/dQw4w9WgXcQ",
         "https://www.tiktok.com/@user/video/123456",
         "https://example.com/reel/Chunk8-jurw/",
         "ftp://instagram.com/reel/Chunk8-jurw/",

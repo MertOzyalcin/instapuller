@@ -1,4 +1,4 @@
-"""Site adapter contract: new platforms (e.g. YouTube) are added through this interface."""
+"""Site adapter contract: new platforms are added through this interface."""
 
 from __future__ import annotations
 
@@ -12,6 +12,17 @@ from instapuller.models import ParsedLink, PullError, SourceMeta
 class SiteAdapter(Protocol):
     site_id: str
     hosts: frozenset[str]
+    allowed_extractors: list[str]  # yt-dlp extractor keys loaded for this site
+    format: str  # yt-dlp format selector
+    requires_js_runtime: bool  # True if the downloader must resolve a JS runtime first
+
+    def extra_ydl_opts(self, js_runtime: Any = None) -> dict[str, Any]:
+        """Site-specific yt-dlp options (e.g. js_runtimes); js_runtime is a jsruntime.JsRuntime or None."""
+        ...
+
+    def check_info(self, info: Any, max_duration_s: float, max_bytes: int) -> None:
+        """Validate the extracted info before downloading; raise PullError if it must be rejected."""
+        ...
 
     def parse_url(self, url: str) -> ParsedLink:
         """Validate and canonicalize a site URL; raise PullError('LINK_GECERSIZ') if invalid."""

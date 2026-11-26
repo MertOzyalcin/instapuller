@@ -57,6 +57,7 @@ ERROR_CODES: dict[str, bool] = {
     "VIDEO_UZUN": True,
     "DOSYA_BOZUK": True,
     "KAYNAK_GECICI": True,
+    "JS_ORTAMI_YOK": True,  # JavaScript runtime missing; file upload still works
     "FFPROBE_YOK": False,
     "ARG_GECERSIZ": False,
     "SILME_HATASI": False,

@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import re
-import socket
 from collections.abc import Iterable
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-
-from yt_dlp.networking.exceptions import TransportError
 
 from instapuller.models import (
     TOOL_OUTDATED_DETAIL,
@@ -19,15 +15,22 @@ from instapuller.models import (
     SizeLimitExceeded,
     SourceMeta,
 )
-from instapuller.sanitize import MAX_DETAIL_LEN, sanitize_detail
+from instapuller.sanitize import sanitize_detail
+from instapuller.sites._common import (
+    exception_chain,
+    http_status,
+    int_or_none,
+    is_network_exc,
+    iso_utc,
+    normalize_host,
+    outdated_detail,
+    strip_prefixes,
+)
 from instapuller.sites.urlcheck import authority_is_clean
 
 _IG_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,}$")
 _IG_HOSTS = frozenset({"instagram.com"})
 
-
-_PREFIX_RE = re.compile(r"^\s*(?:ERROR:\s*|WARNING:\s*|\[[^\]]+\]\s*[^\s:]+:\s*)", re.I)
-_HTTP_STATUS_RE = re.compile(r"HTTP Error (\d{3})")
 
 _SIZE_KEYS = ("max-filesize", "max_filesize", "larger than max", "file is larger")
 _RATE_LIMIT_KEYS = (
@@ -76,86 +79,47 @@ _PARSE_KEYS = (
     "regex",
     "failed to decode",
 )
-_FS_ERRORS = (PermissionError, FileNotFoundError, IsADirectoryError, NotADirectoryError, FileExistsError)
-
-
-def _strip_prefixes(msg: str) -> str:
-    """Strip the "ERROR: " and "[Instagram] <id>: " prefixes added by yt-dlp."""
-    prev = None
-    while prev != msg:
-        prev = msg
-        msg = _PREFIX_RE.sub("", msg, count=1)
-    return msg
-
-
-def _exception_chain(exc: BaseException) -> list[BaseException]:
-    """Walk the DownloadError.exc_info, ExtractorError.cause/exc_info, __cause__ and __context__ chain."""
-    seen: list[BaseException] = []
-    stack: list[object] = [exc]
-    while stack and len(seen) < 20:
-        cur = stack.pop()
-        if not isinstance(cur, BaseException) or any(cur is s for s in seen):
-            continue
-        seen.append(cur)
-        info = getattr(cur, "exc_info", None)
-        if isinstance(info, tuple) and len(info) > 1:
-            stack.append(info[1])
-        stack.append(getattr(cur, "cause", None))
-        stack.append(cur.__cause__)
-        stack.append(cur.__context__)
-    return seen
-
-
-def _http_status(chain: list[BaseException], raw_msg: str) -> int | None:
-    for e in chain:
-        status = getattr(e, "status", None)
-        if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
-            return status
-    for e in chain:
-        m = _HTTP_STATUS_RE.search(str(e))
-        if m:
-            return int(m.group(1))
-    m = _HTTP_STATUS_RE.search(raw_msg)
-    return int(m.group(1)) if m else None
-
-
-def _is_network_exc(e: BaseException) -> bool:
-    if isinstance(e, TransportError | TimeoutError | socket.timeout):
-        return True
-    return isinstance(e, OSError) and not isinstance(e, _FS_ERRORS)
-
-
-def _normalize_host(raw_host: str | None) -> str:
-    host = (raw_host or "").lower()
-    for prefix in ("www.", "m."):
-        if host.startswith(prefix):
-            host = host[len(prefix):]
-    return host
-
-
-def _int_or_none(val: Any) -> int | None:
-    if isinstance(val, bool):
-        return None
-    if isinstance(val, int) and val >= 0:
-        return val
-    return None
-
-
-def _iso_utc(ts: Any) -> str | None:
-    if isinstance(ts, (int, float)) and ts > 0:
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return None
-
-
-def _outdated_detail(raw_msg: str, allowed_paths: Iterable[str | Path]) -> str:
-    budget = MAX_DETAIL_LEN - len(TOOL_OUTDATED_DETAIL) - len(" Original error: ")
-    original = sanitize_detail(raw_msg, max_len=max(budget, 0), allowed_paths=allowed_paths)
-    return f"{TOOL_OUTDATED_DETAIL} Original error: {original}" if original else TOOL_OUTDATED_DETAIL
 
 
 class InstagramAdapter:
     site_id = "instagram"
     hosts = _IG_HOSTS
+    allowed_extractors = ["Instagram"]
+    format = "mp4/best"
+    requires_js_runtime = False
+
+    def extra_ydl_opts(self, js_runtime: Any = None) -> dict[str, Any]:
+        return {}
+
+    def check_info(self, info: Any, max_duration_s: float, max_bytes: int) -> None:
+        """Reject non-dict responses, carousels, foreign extractors and posts without video."""
+        if not isinstance(info, dict):
+            raise PullError(
+                "IG_ARAC_GUNCEL_DEGIL",
+                "Instagram's response could not be read. Upload the video as a file instead.",
+                detail=TOOL_OUTDATED_DETAIL,
+            )
+
+        if info.get("_type") == "playlist" or isinstance(info.get("entries"), list):
+            raise PullError(
+                "IG_VIDEO_DEGIL",
+                "Carousel posts are not supported; enter a single video or Reel link. "
+                "Upload the video as a file instead.",
+            )
+
+        if info.get("extractor_key") != "Instagram":
+            raise PullError(
+                "IG_ARAC_GUNCEL_DEGIL",
+                "Instagram's response could not be read. Upload the video as a file instead.",
+                detail=f"{TOOL_OUTDATED_DETAIL} Unexpected extractor: {str(info.get('extractor_key'))[:40]}",
+            )
+
+        vcodec = info.get("vcodec")
+        if vcodec == "none" and not info.get("formats"):
+            raise PullError(
+                "IG_VIDEO_DEGIL",
+                "No downloadable video was found in this post. Upload the video as a file instead.",
+            )
 
     def parse_url(self, url: str) -> ParsedLink:
         raw = (url or "").strip()
@@ -177,7 +141,7 @@ class InstagramAdapter:
         if (
             parts.scheme not in ("http", "https")
             or not authority_is_clean(parts)
-            or _normalize_host(parts.hostname) not in self.hosts
+            or normalize_host(parts.hostname) not in self.hosts
         ):
             raise PullError(
                 "LINK_GECERSIZ",
@@ -228,10 +192,10 @@ class InstagramAdapter:
             exc.detail = sanitize_detail(exc.detail, allowed_paths=allowed_paths)
             return exc
 
-        chain = _exception_chain(exc)
+        chain = exception_chain(exc)
         raw_msg = str(exc) or type(exc).__name__
         detail = sanitize_detail(raw_msg, allowed_paths=allowed_paths)
-        text = _strip_prefixes(raw_msg).lower()
+        text = strip_prefixes(raw_msg).lower()
 
         # 1. Size limit exceeded mid-download (internal exception) or yt-dlp's own message
         if any(isinstance(e, SizeLimitExceeded) for e in chain) or any(
@@ -244,7 +208,7 @@ class InstagramAdapter:
             )
 
         # 2. HTTP status: from the exception type first, else only from the "HTTP Error NNN" pattern
-        status = _http_status(chain, raw_msg)
+        status = http_status(chain, raw_msg)
         if status == 429:
             return self._rate_limit(detail)
         if status in (401, 403, 404):
@@ -265,7 +229,7 @@ class InstagramAdapter:
             return self._inaccessible(detail)
 
         # 4. Network / DNS / timeout: exception type or yt-dlp network message patterns
-        if any(_is_network_exc(e) for e in chain) or any(k in text for k in _NETWORK_KEYS):
+        if any(is_network_exc(e) for e in chain) or any(k in text for k in _NETWORK_KEYS):
             return self._transient(detail)
 
         # 5. Parsing failure / yt-dlp version mismatch
@@ -275,7 +239,7 @@ class InstagramAdapter:
             return PullError(
                 "IG_ARAC_GUNCEL_DEGIL",
                 "Instagram's response could not be read. Upload the video as a file instead.",
-                detail=_outdated_detail(raw_msg, allowed_paths),
+                detail=outdated_detail(raw_msg, allowed_paths),
             )
 
         # 6. Other temporary errors
@@ -332,11 +296,11 @@ class InstagramAdapter:
             platform_id=parsed.platform_id,
             title=caption,
             author=author,
-            published_at=_iso_utc(info.get("timestamp")),
+            published_at=iso_utc(info.get("timestamp")),
             duration_s=round(duration_s, 2) if duration_s is not None else None,
             stats={
-                "views": _int_or_none(info.get("view_count")),
-                "likes": _int_or_none(info.get("like_count")),
-                "comments": _int_or_none(info.get("comment_count")),
+                "views": int_or_none(info.get("view_count")),
+                "likes": int_or_none(info.get("like_count")),
+                "comments": int_or_none(info.get("comment_count")),
             },
         )
