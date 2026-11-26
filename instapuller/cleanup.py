@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 # Name instapuller generates when not keeping the video: <code>_<8 hex>.<ext>
-_GENERATED_NAME_RE = re.compile(r"[A-Za-z0-9_-]{5,}_[0-9a-f]{8}\.(?:mp4|mov|webm|mkv|m4v)", re.I)
+_GENERATED_NAME_RE = re.compile(r"[A-Za-z0-9_-]{5,}_[0-9a-f]{8}\.(?:mp4|mov|webm|mkv|m4v|m4a|opus|mp3|ogg|aac)", re.I)
 
 
 def cleanup_file(path: Path | str) -> bool:

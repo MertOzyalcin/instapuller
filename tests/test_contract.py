@@ -158,7 +158,7 @@ def test_file_exceeding_max_size_rejected_and_deleted(tmp_path):
 
 
 def test_cli_returns_json_error_for_disallowed_site(capsys):
-    rc = main(["fetch", "https://www.youtube.com/shorts/dQw4w9WgXcQ"])
+    rc = main(["fetch", "https://www.tiktok.com/@user/video/123456"])
     assert rc == 1
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False

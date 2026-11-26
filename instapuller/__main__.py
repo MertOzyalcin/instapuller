@@ -13,6 +13,7 @@ from instapuller.downloader import (
     DEFAULT_MAX_FILESIZE_MB,
     fetch_video,
 )
+from instapuller.jsruntime import runtime_name_for
 from instapuller.models import PullError
 from instapuller.rate_limit import DEFAULT_COOLDOWN_S, MIN_COOLDOWN_S
 from instapuller.sanitize import sanitize_detail
@@ -40,12 +41,12 @@ class _JsonArgumentParser(argparse.ArgumentParser):
 def _build_parser() -> argparse.ArgumentParser:
     parser = _JsonArgumentParser(
         prog="instapuller",
-        description="Anonymous Instagram video/Reel download and metrics tool (JSON CLI).",
+        description="Anonymous Instagram and YouTube (Shorts) video download and metrics tool (JSON CLI).",
     )
     sub = parser.add_subparsers(dest="command", required=True, parser_class=_JsonArgumentParser)
 
     fetch_p = sub.add_parser("fetch", help="Download the video at the given link and return its metrics.")
-    fetch_p.add_argument("url", help="Instagram Reel or single video link.")
+    fetch_p.add_argument("url", help="Instagram Reel/video or YouTube Shorts/video link.")
     fetch_p.add_argument(
         "--out-dir",
         type=Path,
@@ -97,6 +98,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the ffprobe executable (optional).",
     )
     fetch_p.add_argument(
+        "--js-runtime-bin",
+        type=Path,
+        default=None,
+        help="Path to the JavaScript runtime (qjs or deno) used for YouTube (optional; "
+        "env INSTAPULLER_JS_RUNTIME_BIN).",
+    )
+    fetch_p.add_argument(
         "--state-file",
         type=Path,
         default=None,
@@ -131,6 +139,10 @@ def _run(argv: list[str] | None) -> int:
     if args.command == "fetch":
         if not (args.cooldown >= MIN_COOLDOWN_S):
             return _arg_error(f"--cooldown must be at least {int(MIN_COOLDOWN_S)} seconds.")
+        if args.js_runtime_bin is not None and runtime_name_for(args.js_runtime_bin) is None:
+            return _arg_error(
+                "--js-runtime-bin must point to a file named qjs/quickjs or deno (e.g. qjs.exe, deno.exe)."
+            )
         try:
             result = fetch_video(
                 args.url,
@@ -142,6 +154,7 @@ def _run(argv: list[str] | None) -> int:
                 max_filesize_mb=args.max_size_mb,
                 state_file=args.state_file,
                 ffprobe_bin=args.ffprobe_bin,
+                js_runtime_bin=args.js_runtime_bin,
             )
         except PullError as err:
             _emit(err.to_dict())

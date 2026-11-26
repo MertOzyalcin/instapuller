@@ -71,7 +71,7 @@ def test_double_dash_protects_dash_prefixed_link():
 
 
 def test_disallowed_site_is_link_gecersiz():
-    rc, payload = _run("fetch", "https://www.youtube.com/shorts/dQw4w9WgXcQ")
+    rc, payload = _run("fetch", "https://www.tiktok.com/@user/video/123456")
     assert rc == 1
     _assert_error(payload, "LINK_GECERSIZ")
 
@@ -136,14 +136,15 @@ _TRUE_CODES = [
     "VIDEO_UZUN",
     "DOSYA_BOZUK",
     "KAYNAK_GECICI",
+    "JS_ORTAMI_YOK",
 ]
 _FALSE_CODES = ["FFPROBE_YOK", "ARG_GECERSIZ", "SILME_HATASI", "BEKLENMEYEN_HATA"]
 
 
-def test_error_code_table_is_exactly_the_agreed_fourteen():
+def test_error_code_table_is_exactly_the_agreed_fifteen():
     expected = {**dict.fromkeys(_TRUE_CODES, True), **dict.fromkeys(_FALSE_CODES, False)}
     assert ERROR_CODES == expected
-    assert len(ERROR_CODES) == 14
+    assert len(ERROR_CODES) == 15
 
 
 def test_every_pullerror_code_in_source_is_in_table_and_old_code_is_gone():
