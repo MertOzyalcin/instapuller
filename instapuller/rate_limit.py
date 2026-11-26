@@ -145,21 +145,20 @@ class CooldownLimiter:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def _read_state(self) -> tuple[float | None, float | None]:
-        """Return (last_request_at, written_at) for this site; unreadable values are None.
+    def _site_times(self, root: dict) -> tuple[float | None, float | None]:
+        """Return (last_request_at, written_at) for this site from root; unreadable values are None.
 
         Instagram's record lives at the top level (compatible with older versions); every
         other site is a nested record keyed by its site id.
         """
-        root = self._read_root()
         rec = root if self.site == DEFAULT_SITE else root.get(self.site)
         if not isinstance(rec, dict):
             return None, None
         return self._num(rec.get("last_request_at")), self._num(rec.get("written_at"))
 
-    def _write_state(self, slot: float, written_at: float) -> None:
+    def _write_state(self, root: dict, slot: float, written_at: float) -> None:
         record = {"last_request_at": slot, "written_at": written_at}
-        root = self._read_root()  # preserve every other site's record
+        # root is the state read under the same lock: it preserves every other site's record
         if self.site == DEFAULT_SITE:
             root.update(record)
         else:
@@ -191,7 +190,8 @@ class CooldownLimiter:
         """
         with self._exclusive_lock():
             now = self._clock()
-            last_ts, written_at = self._read_state()
+            root = self._read_root()
+            last_ts, written_at = self._site_times(root)
             slot = now
             if last_ts is not None:
                 slot = max(now, last_ts + self.cooldown_s)
@@ -210,7 +210,7 @@ class CooldownLimiter:
                     "or upload the video as a file.",
                     retry_after_s=round(delay, 2),
                 )
-            self._write_state(slot, now)
+            self._write_state(root, slot, now)
 
         if delay > 0:
             self._sleeper(delay)

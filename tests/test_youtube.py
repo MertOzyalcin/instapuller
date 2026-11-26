@@ -282,7 +282,7 @@ def test_playlist_and_foreign_extractor_and_non_dict():
         (None, "IG_ARAC_GUNCEL_DEGIL"),
     ]:
         with pytest.raises(PullError) as exc_info:
-            a.check_info(info, 185.0, 1024)
+            a.check_info(info, 185.0)
         assert exc_info.value.code == code
 
 
@@ -416,11 +416,43 @@ def test_cleanup_accepts_audio_extensions(tmp_path, ext):
     assert cleanup_file(f) is True
 
 
-def test_cli_rejects_unknown_runtime_name(capsys, tmp_path):
-    rc = main(["fetch", CANON, "--js-runtime-bin", str(tmp_path / "node.exe")])
+@pytest.mark.parametrize("bad", ["node.exe", ""])
+def test_cli_bad_runtime_name_for_youtube_is_js_ortami_yok(capsys, tmp_path, bad):
+    arg = str(tmp_path / bad) if bad else bad
+    rc = main(["fetch", CANON, "--js-runtime-bin", arg, "--out-dir", str(tmp_path / "o")])
     assert rc == 1
-    out = json.loads(capsys.readouterr().out)
-    assert out["error"]["code"] == "ARG_GECERSIZ"
+    err = json.loads(capsys.readouterr().out)["error"]
+    assert err["code"] == "JS_ORTAMI_YOK"
+    assert err["upload_fallback"] is True
+
+
+def test_cli_bad_runtime_does_not_mask_invalid_youtube_url(capsys):
+    rc = main(["fetch", "https://www.youtube.com/@chan", "--js-runtime-bin", "node.exe"])
+    assert rc == 1
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "LINK_GECERSIZ"
+
+
+@pytest.mark.parametrize("bad", ["node.exe", ""])
+def test_cli_instagram_ignores_bad_js_runtime_bin(monkeypatch, capsys, tmp_path, bad):
+    from functools import partial
+
+    import instapuller.__main__ as cli
+
+    info = {"id": "Chunk8-jurw", "extractor_key": "Instagram", "ext": "mp4", "duration": 10}
+    monkeypatch.setattr(
+        cli,
+        "fetch_video",
+        partial(
+            fetch_video,
+            ydl_factory=lambda o: FakeYDL(o, info, ext="mp4"),
+            duration_prober=lambda path, ffprobe_bin=None: 10.0,
+            limiter=NoWaitLimiter(),
+        ),
+    )
+    url = "https://www.instagram.com/reel/Chunk8-jurw/"
+    rc = main(["fetch", url, "--js-runtime-bin", bad, "--out-dir", str(tmp_path / "o")])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
 def test_cli_passes_js_runtime_bin(monkeypatch, capsys, tmp_path):
@@ -492,3 +524,219 @@ def test_fetch_video_youtube_only_state_file(tmp_path, qjs):
     with pytest.raises(PullError) as yt:
         fetch_video(CANON, ydl_factory=lambda o: FakeYDL(o, yt_info()), **common)
     assert yt.value.code == "IG_COOLDOWN"
+
+
+# --- JS challenge failures reported only as yt-dlp warnings ---------------------------------------------
+#
+# yt-dlp 2026.11.23 reports a missing JS runtime and failed n/sig challenges only via report_warning
+# (-> logger.warning) and then fails with a generic error. The tests below use the REAL texts:
+# the "no runtime" warning is produced by running yt-dlp's own YoutubeIE code with our logger; the
+# challenge-remaining templates (nested in a long extraction method) are copied from _video.py and
+# a guard test checks they still exist in the installed yt-dlp source.
+
+import yt_dlp  # noqa: E402
+from yt_dlp.utils import DownloadError, ExtractorError  # noqa: E402
+
+from instapuller.downloader import _SilentLogger  # noqa: E402
+
+_YT_DIR = Path(yt_dlp.__file__).parent / "extractor" / "youtube"
+_EJS_HELP = (
+    "Ensure you have a supported JavaScript runtime and challenge solver script distribution installed. "
+    "Review any warnings presented before this message. "
+    "For more details, refer to  https://github.com/yt-dlp/yt-dlp/wiki/EJS"
+)
+# yt-dlp 2026.11.23, extractor/youtube/_video.py:3364 and :3368 (via IE.report_warning with video_id)
+SIG_SOLVING_WARNING = f"[youtube] {VID}: Signature solving failed: Some formats may be missing. {_EJS_HELP}"
+N_SOLVING_WARNING = f"[youtube] {VID}: n challenge solving failed: Some formats may be missing. {_EJS_HELP}"
+# yt-dlp 2026.11.23, extractor/youtube/jsc/_builtin/ejs.py:~236 and :~242 (self.logger.warning)
+EJS_VERSION_WARNING = (
+    "Challenge solver lib script version 0.0.1 is not supported "
+    "(source: python package, variant: minified, supported version: 0.4.0)"
+)
+EJS_HASH_WARNING = (
+    "Hash mismatch on challenge solver lib script (source: python package, variant: minified, hash: abc)!"
+)
+# yt-dlp 2026.11.23, extractor/youtube/jsc/_director.py:~170-195 (self.logger.warning)
+EJS_SKIPPED_WARNING = (
+    "Remote component challenge solver script (deno) was skipped. It may be required to solve JS challenges. "
+    "You can enable the download with  --remote-components ejs:github  (recommended). "
+    "For more information and alternatives, refer to  https://github.com/yt-dlp/yt-dlp/wiki/EJS"
+)
+# yt-dlp 2026.11.23, extractor/youtube/_video.py:4095 ("reason += ...")
+CAPTCHA_MESSAGE = "[youtube] abc: Sign in to confirm. YouTube is requiring a captcha challenge before playback"
+FORMAT_UNAVAILABLE = "Requested format is not available. Use --list-formats for a list of available formats"
+
+
+def _real_no_runtime_warning() -> str:
+    """Run yt-dlp's real client-selection code without any JS runtime and capture its warning."""
+    logger = _SilentLogger()
+    opts = {
+        "logger": logger,
+        "js_runtimes": {"quickjs": {"path": "does/not/exist/qjs.exe"}},
+        "remote_components": set(),
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ie = ydl.get_info_extractor("Youtube")
+        ie.set_downloader(ydl)
+        ie.initialize()
+        ie._get_requested_clients(CANON, {}, False)
+    assert logger.warnings, "yt-dlp did not warn about the missing JS runtime"
+    return logger.warnings[0]
+
+
+def test_real_ytdlp_no_runtime_warning_is_classified():
+    warning = _real_no_runtime_warning()
+    assert "No supported JavaScript runtime" in warning
+    exc = DownloadError(f"ERROR: [youtube] {VID}: {FORMAT_UNAVAILABLE}")
+    assert YouTubeAdapter().map_error(exc, warnings=[warning]).code == "JS_ORTAMI_YOK"
+    # without the warning the same exception is just "not an audio/video"
+    assert YouTubeAdapter().map_error(exc).code == "IG_VIDEO_DEGIL"
+
+
+def test_ytdlp_warning_templates_still_exist_in_installed_source():
+    """Guard: the texts the classification relies on must still be in yt-dlp (breaks if they change)."""
+    video = (_YT_DIR / "_video.py").read_text(encoding="utf-8")
+    ejs = (_YT_DIR / "jsc" / "_builtin" / "ejs.py").read_text(encoding="utf-8")
+    director = (_YT_DIR / "jsc" / "_director.py").read_text(encoding="utf-8")
+    common = (_YT_DIR.parent / "common.py").read_text(encoding="utf-8")
+    assert "No supported JavaScript runtime could be found." in video
+    assert "Signature solving failed: Some formats may be missing." in video
+    assert "n challenge solving failed: Some formats may be missing." in video
+    assert "Challenge solver {script_type.value} script version" in ejs and "is not supported (source:" in ejs
+    assert "Hash mismatch on challenge solver" in ejs
+    assert "It may be required to solve JS challenges." in director
+    assert "YouTube is requiring a captcha challenge before playback" in video
+    assert "The uploader has not made this video available in your country" in video
+    assert "This video is DRM protected" in common
+    assert "due to geo restriction" in common
+
+
+@pytest.mark.parametrize(
+    "warning",
+    [SIG_SOLVING_WARNING, N_SOLVING_WARNING, EJS_VERSION_WARNING, EJS_HASH_WARNING, EJS_SKIPPED_WARNING],
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        DownloadError(f"ERROR: [youtube] {VID}: {FORMAT_UNAVAILABLE}"),
+        DownloadError("ERROR: unable to download video data: HTTP Error 403: Forbidden"),
+    ],
+    ids=["format-unavailable", "http-403"],
+)
+def test_js_warning_wins_over_generic_failure(warning, failure):
+    err = YouTubeAdapter().map_error(failure, warnings=[warning])
+    assert err.code == "JS_ORTAMI_YOK"
+    assert err.upload_fallback is True
+
+
+def test_unrelated_warnings_do_not_change_classification():
+    noise = [
+        "[youtube] Falling back to generic n function search",
+        f"[youtube] {VID}: Some web client https formats have been skipped as they are missing a url.",
+        '[youtube] Skipping unsupported client "foo"',
+    ]
+    a = YouTubeAdapter()
+    assert a.map_error(ExtractorError(FORMAT_UNAVAILABLE, expected=True), warnings=noise).code == "IG_VIDEO_DEGIL"
+    assert a.map_error(DownloadError("HTTP Error 403: Forbidden"), warnings=noise).code == "IG_ERISILEMEDI"
+    assert a.map_error(RuntimeError("HTTP Error 503"), warnings=noise).code == "KAYNAK_GECICI"
+
+
+def test_size_limit_wins_over_js_warning():
+    err = YouTubeAdapter().map_error(
+        RuntimeError("File is larger than max-filesize (1 bytes)"), warnings=[N_SOLVING_WARNING]
+    )
+    assert err.code == "DOSYA_BUYUK"
+
+
+@pytest.mark.parametrize(
+    "make_exc",
+    [
+        lambda: DownloadError(
+            f"ERROR: [youtube] {VID}: {FORMAT_UNAVAILABLE}", ExtractorError(FORMAT_UNAVAILABLE, expected=True)
+        ),
+        lambda: DownloadError("ERROR: unable to download video data: HTTP Error 403: Forbidden"),
+    ],
+    ids=["format-unavailable", "http-403"],
+)
+def test_fetch_video_js_warnings_then_generic_error(tmp_path, qjs, make_exc):
+    class Warns(FakeYDL):
+        def extract_info(self, url, download=False):
+            for w in (_real_no_runtime_warning(), SIG_SOLVING_WARNING, N_SOLVING_WARNING):
+                self.opts["logger"].warning(w)
+            raise make_exc()
+
+    with pytest.raises(PullError) as exc_info:
+        fetch_video(
+            CANON,
+            out_dir=tmp_path / "out",
+            js_runtime_bin=qjs,
+            limiter=NoWaitLimiter(),
+            ydl_factory=lambda opts: Warns(opts, {}),
+        )
+    err = exc_info.value
+    assert err.code == "JS_ORTAMI_YOK"
+    assert err.upload_fallback is True
+    assert "n challenge solving failed" in err.detail or "Signature solving failed" in err.detail
+
+
+# --- network precedence and newly recognised yt-dlp messages --------------------------------------------
+
+
+def test_network_exception_beats_inaccessible_text():
+    import socket
+
+    a = YouTubeAdapter()
+    assert a.map_error(OSError("Video unavailable: connection broke")).code == "KAYNAK_GECICI"
+    assert a.map_error(socket.timeout("service unavailable")).code == "KAYNAK_GECICI"
+    # plain text with a non-network exception type is still "inaccessible"
+    assert a.map_error(RuntimeError("ERROR: [youtube] abc: Video unavailable")).code == "IG_ERISILEMEDI"
+
+
+@pytest.mark.parametrize(
+    "msg, code",
+    [
+        # _video.py:4082 (raised as GeoRestrictedError with this text)
+        ("ERROR: [youtube] abc: The uploader has not made this video available in your country", "IG_ERISILEMEDI"),
+        # common.py:1256 default geo message
+        ("ERROR: [youtube] abc: This video is not available from your location due to geo restriction", "IG_ERISILEMEDI"),
+        # common.py:1227
+        ("ERROR: [youtube] abc: This video is DRM protected", "IG_ERISILEMEDI"),
+        # _video.py:4095
+        (f"ERROR: {CAPTCHA_MESSAGE}", "IG_RATE_LIMIT"),
+    ],
+)
+def test_real_ytdlp_inaccessible_and_captcha_messages(msg, code):
+    assert YouTubeAdapter().map_error(ExtractorError(msg, expected=True)).code == code
+
+
+# --- JS runtime argument edge cases ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("blank", ["", "   ", Path("")])
+def test_blank_explicit_runtime_is_an_error_not_unset(blank, tmp_path, monkeypatch):
+    qjs = tmp_path / "qjs.exe"
+    qjs.write_bytes(b"")
+    monkeypatch.setenv("INSTAPULLER_JS_RUNTIME_BIN", str(qjs))  # must NOT be used
+    with pytest.raises(PullError) as exc_info:
+        resolve_js_runtime(blank)
+    assert exc_info.value.code == "JS_ORTAMI_YOK"
+
+
+def test_empty_env_var_still_means_unset(monkeypatch):
+    _no_runtime(monkeypatch)
+    monkeypatch.setenv("INSTAPULLER_JS_RUNTIME_BIN", "  ")
+    with pytest.raises(PullError) as exc_info:
+        resolve_js_runtime()
+    assert "No JavaScript runtime found" in exc_info.value.detail  # fell through to the search
+
+
+def test_ffprobe_oserror_does_not_mask_path_runtime(tmp_path, monkeypatch):
+    onpath = tmp_path / "qjs.exe"
+    onpath.write_bytes(b"")
+
+    def bad_ffprobe(_=None):
+        raise OSError("broken symlink")
+
+    monkeypatch.setattr(jsr, "resolve_ffprobe", bad_ffprobe)
+    monkeypatch.setattr(jsr.shutil, "which", lambda name: str(onpath) if name == "qjs" else None)
+    assert resolve_js_runtime().path == onpath

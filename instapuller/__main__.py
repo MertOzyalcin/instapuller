@@ -13,7 +13,6 @@ from instapuller.downloader import (
     DEFAULT_MAX_FILESIZE_MB,
     fetch_video,
 )
-from instapuller.jsruntime import runtime_name_for
 from instapuller.models import PullError
 from instapuller.rate_limit import DEFAULT_COOLDOWN_S, MIN_COOLDOWN_S
 from instapuller.sanitize import sanitize_detail
@@ -139,10 +138,6 @@ def _run(argv: list[str] | None) -> int:
     if args.command == "fetch":
         if not (args.cooldown >= MIN_COOLDOWN_S):
             return _arg_error(f"--cooldown must be at least {int(MIN_COOLDOWN_S)} seconds.")
-        if args.js_runtime_bin is not None and runtime_name_for(args.js_runtime_bin) is None:
-            return _arg_error(
-                "--js-runtime-bin must point to a file named qjs/quickjs or deno (e.g. qjs.exe, deno.exe)."
-            )
         try:
             result = fetch_video(
                 args.url,

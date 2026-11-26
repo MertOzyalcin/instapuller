@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -91,7 +91,7 @@ class InstagramAdapter:
     def extra_ydl_opts(self, js_runtime: Any = None) -> dict[str, Any]:
         return {}
 
-    def check_info(self, info: Any, max_duration_s: float, max_bytes: int) -> None:
+    def check_info(self, info: Any, max_duration_s: float) -> None:
         """Reject non-dict responses, carousels, foreign extractors and posts without video."""
         if not isinstance(info, dict):
             raise PullError(
@@ -187,6 +187,7 @@ class InstagramAdapter:
         exc: Exception,
         *,
         allowed_paths: Iterable[str | Path] = (),
+        warnings: Sequence[str] = (),  # accepted for the adapter protocol; Instagram ignores them
     ) -> PullError:
         if isinstance(exc, PullError):
             exc.detail = sanitize_detail(exc.detail, allowed_paths=allowed_paths)

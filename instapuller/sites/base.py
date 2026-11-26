@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -20,7 +20,7 @@ class SiteAdapter(Protocol):
         """Site-specific yt-dlp options (e.g. js_runtimes); js_runtime is a jsruntime.JsRuntime or None."""
         ...
 
-    def check_info(self, info: Any, max_duration_s: float, max_bytes: int) -> None:
+    def check_info(self, info: Any, max_duration_s: float) -> None:
         """Validate the extracted info before downloading; raise PullError if it must be rejected."""
         ...
 
@@ -33,8 +33,13 @@ class SiteAdapter(Protocol):
         exc: Exception,
         *,
         allowed_paths: Iterable[str | Path] = (),
+        warnings: Sequence[str] = (),
     ) -> PullError:
-        """Map an infrastructure/yt-dlp error to a user-friendly, sanitized PullError."""
+        """Map an infrastructure/yt-dlp error to a user-friendly, sanitized PullError.
+
+        warnings: yt-dlp warning lines collected during the run (some failures, e.g. a missing
+        JS runtime, are only reported there).
+        """
         ...
 
     def extract_meta(

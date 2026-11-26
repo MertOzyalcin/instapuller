@@ -67,7 +67,7 @@ def resolve_js_runtime(
     ffprobe_bin: str | Path | None = None,
 ) -> JsRuntime:
     """Order: explicit argument > INSTAPULLER_JS_RUNTIME_BIN > next to ffprobe > PATH (qjs, then deno)."""
-    if js_runtime_bin:
+    if js_runtime_bin is not None:  # set but empty/blank is invalid (JS_ORTAMI_YOK), not "unset"
         return _resolve_given(js_runtime_bin, "the js_runtime_bin argument")
     env = os.environ.get(ENV_VAR, "").strip()
     if env:
@@ -75,7 +75,7 @@ def resolve_js_runtime(
 
     try:
         probe_dir: Path | None = Path(resolve_ffprobe(ffprobe_bin)).resolve().parent
-    except PullError:
+    except (PullError, OSError):
         probe_dir = None
     if probe_dir is not None:
         for name in _SEARCH_NAMES:

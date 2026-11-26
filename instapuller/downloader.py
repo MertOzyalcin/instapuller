@@ -257,7 +257,7 @@ def fetch_video(
         try:
             with ydl_factory(ydl_opts) as ydl:
                 info = ydl.extract_info(parsed.canonical_url, download=False)
-                adapter.check_info(info, max_duration_s, max_bytes)
+                adapter.check_info(info, max_duration_s)
                 if _exceeds_precheck_filesize(info, max_bytes):
                     raise PullError(
                         "DOSYA_BUYUK",
@@ -266,7 +266,9 @@ def fetch_video(
                 result = ydl.process_ie_result(info, download=True)
         except Exception as exc:
             raise _with_warnings(
-                adapter.map_error(exc, allowed_paths=allowed_paths), logger, allowed_paths
+                adapter.map_error(exc, allowed_paths=allowed_paths, warnings=tuple(logger.warnings)),
+                logger,
+                allowed_paths,
             ) from None
 
         staged_file = _find_downloaded_file(result, info, staging_dir)

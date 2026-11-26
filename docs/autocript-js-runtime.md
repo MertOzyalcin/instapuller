@@ -42,7 +42,7 @@ if ($Runtime -eq 'qjs') {
 }
 
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
-$Dest   = (Resolve-Path $Dest).Path
+$Dest   = (Resolve-Path -LiteralPath $Dest).Path
 $target = Join-Path $Dest $final
 $tmp    = Join-Path $Dest ('.download-' + [guid]::NewGuid().ToString('N') + '.tmp')
 $tmpDir = $null

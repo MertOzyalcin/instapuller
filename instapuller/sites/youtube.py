@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,21 +34,29 @@ _YT_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 _YT_HOSTS = frozenset({"youtube.com", "youtu.be"})
 
 _SIZE_KEYS = ("max-filesize", "max_filesize", "larger than max", "file is larger")
+# yt-dlp reports JS runtime / challenge-solver problems only as warnings; the exception that
+# follows is generic ("Requested format is not available", HTTP 403). Matched (lower-case)
+# against the exception text and the collected warnings. Templates (yt-dlp 2026.11.23):
+#   _video.py:3007  "No supported JavaScript runtime could be found. ..."
+#   _video.py:3364  "Signature solving failed: Some formats may be missing. ..."
+#   _video.py:3368  "n challenge solving failed: Some formats may be missing. ..."
+#   jsc/_builtin/ejs.py:~236  "Challenge solver <type> script version ... is not supported ..."
+#   jsc/_builtin/ejs.py:~242  "Hash mismatch on challenge solver <type> script ..."
+#   jsc/_director.py:~170  "Remote component ... skipped. It may be required to solve JS challenges."
+# tests/test_youtube.py asserts these templates still exist in the installed yt-dlp.
 _JS_KEYS = (
     "no supported javascript runtime",
-    "javascript runtime",
-    "js runtime",
-    "n challenge",
-    "nsig extraction",
-    "challenge solving failed",
     "signature solving failed",
-    "failed to solve",
+    "n challenge solving failed",
+    "challenge solver",
+    "solve js challenges",
 )
 _RATE_LIMIT_KEYS = (
     "rate-limit",
     "rate limit",
     "too many requests",
     "not a bot",
+    "captcha",
 )
 _NOT_AUDIO_VIDEO_KEYS = (
     "live event",
@@ -79,6 +87,11 @@ _INACCESSIBLE_KEYS = (
     "copyright",
     "private",
     "does not exist",
+    "available in your country",
+    "not available from your location",
+    "geo restrict",
+    "geo-restrict",
+    "drm protected",
     "not available",
     "unavailable",
 )
@@ -192,7 +205,7 @@ class YouTubeAdapter:
             opts["js_runtimes"] = {js_runtime.name: {"path": str(js_runtime.path)}}
         return opts
 
-    def check_info(self, info: Any, max_duration_s: float, max_bytes: int) -> None:
+    def check_info(self, info: Any, max_duration_s: float) -> None:
         if not isinstance(info, dict):
             raise self._unreadable(TOOL_OUTDATED_DETAIL)
         if info.get("_type") == "playlist" or isinstance(info.get("entries"), list):
@@ -228,6 +241,7 @@ class YouTubeAdapter:
         exc: Exception,
         *,
         allowed_paths: Iterable[str | Path] = (),
+        warnings: Sequence[str] = (),
     ) -> PullError:
         if isinstance(exc, PullError):
             exc.detail = sanitize_detail(exc.detail, allowed_paths=allowed_paths)
@@ -246,8 +260,9 @@ class YouTubeAdapter:
                 detail=detail,
             )
 
-        # 2. JavaScript runtime / challenge solving problems
-        if any(k in text for k in _JS_KEYS):
+        # 2. JavaScript runtime / challenge solving problems (yt-dlp mostly reports them as warnings)
+        js_text = " | ".join([text, *(str(w) for w in warnings)]).lower().replace("’", "'")
+        if any(k in js_text for k in _JS_KEYS):
             return PullError(
                 "JS_ORTAMI_YOK",
                 "Setup is incomplete: YouTube downloads need a working JavaScript runtime. "
@@ -264,7 +279,12 @@ class YouTubeAdapter:
         if status is not None:
             return self._transient(detail)  # 5xx and other HTTP errors
 
-        # 4. Text-based yt-dlp messages (with prefixes stripped)
+        # 4. Network / DNS / timeout exceptions come before any text matching: a transport error
+        # whose message happens to contain "unavailable" is transient, not "private/deleted".
+        if any(is_network_exc(e) for e in chain):
+            return self._transient(detail)
+
+        # 5. Text-based yt-dlp messages (with prefixes stripped)
         if any(k in text for k in _RATE_LIMIT_KEYS):
             return self._rate_limit(detail)
         if any(k in text for k in _NOT_AUDIO_VIDEO_KEYS):
@@ -277,15 +297,15 @@ class YouTubeAdapter:
         if any(k in text for k in _INACCESSIBLE_KEYS):
             return self._inaccessible(detail)
 
-        # 5. Network / DNS / timeout
-        if any(is_network_exc(e) for e in chain) or any(k in text for k in _NETWORK_KEYS):
+        # 6. Network / DNS / timeout (text only; exceptions were handled above)
+        if any(k in text for k in _NETWORK_KEYS):
             return self._transient(detail)
 
-        # 6. Parsing failure / yt-dlp version mismatch
+        # 7. Parsing failure / yt-dlp version mismatch
         if isinstance(exc, (KeyError, TypeError, ValueError)) or any(k in text for k in _PARSE_KEYS):
             return self._unreadable(outdated_detail(raw_msg, allowed_paths))
 
-        # 7. Other temporary errors
+        # 8. Other temporary errors
         return self._transient(detail)
 
     @staticmethod

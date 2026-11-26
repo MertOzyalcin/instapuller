@@ -33,7 +33,7 @@ The runtime executable is resolved in this order (first match wins; a value that
 3. Next to `ffprobe` (the resolved `ffprobe` directory is searched for `qjs`, `quickjs`, then `deno`, with or without `.exe`)
 4. `PATH` (`qjs`, then `quickjs`, then `deno`)
 
-The runtime kind is inferred from the file name (without extension, case-insensitive): `qjs*` / `quickjs*` is treated as `quickjs`, `deno*` as `deno`. Any other name is rejected (the CLI returns `ARG_GECERSIZ` for a bad `--js-runtime-bin` name). If no usable runtime is found, YouTube links return `JS_ORTAMI_YOK` before the cooldown slot is taken and before any network request; Instagram links are unaffected.
+The runtime kind is inferred from the file name (without extension, case-insensitive): `qjs*` / `quickjs*` is treated as `quickjs`, `deno*` as `deno`. Any other name is rejected with `JS_ORTAMI_YOK` (`upload_fallback: true`), in the CLI and the API alike, and only for YouTube links after URL validation. An explicitly passed `--js-runtime-bin` / `js_runtime_bin` that is empty, blank, missing or badly named is an error (`JS_ORTAMI_YOK`); it does not fall through to the next source. An absent argument and an empty `INSTAPULLER_JS_RUNTIME_BIN` both count as "unset". If no usable runtime is found, YouTube links return `JS_ORTAMI_YOK` before the cooldown slot is taken and before any network request; Instagram links are unaffected.
 
 For a Windows install script that downloads a pinned runtime into the application's own folder, see [docs/autocript-js-runtime.md](docs/autocript-js-runtime.md).
 
@@ -226,7 +226,7 @@ The code list lives in a single table (`instapuller/models.py` → `ERROR_CODES`
 | `VIDEO_UZUN` | Video too long | Video exceeds the duration limit (default **185 s**; the file is deleted) | `true` |
 | `DOSYA_BOZUK` | File corrupt | The downloaded file could not be read or its duration is invalid | `true` |
 | `KAYNAK_GECICI` | Temporary source error | Network/transfer errors and other temporary failures where no video file is produced | `true` |
-| `JS_ORTAMI_YOK` | JavaScript runtime missing | YouTube link and no usable JS runtime found (checked before the cooldown and any network call), an unsupported runtime file name, or `yt-dlp` could not solve YouTube's JS challenge (e.g. a mismatched `yt-dlp-ejs` version) | `true` |
+| `JS_ORTAMI_YOK` | JavaScript runtime missing | YouTube link and no usable JS runtime found (checked before the cooldown and any network call), an unsupported runtime file name, or `yt-dlp` could not solve YouTube's JS challenge (e.g. a mismatched `yt-dlp-ejs` version; yt-dlp reports this only as warnings, so the collected warnings are checked too) | `true` |
 | `FFPROBE_YOK` | ffprobe missing | `ffprobe` was not found (incomplete setup) | `false` |
 | `ARG_GECERSIZ` | Invalid argument | Invalid or missing command-line argument, `--cooldown` < 15 | `false` |
 | `SILME_HATASI` | Deletion failed | `cleanup` could not delete the file | `false` |
@@ -251,8 +251,8 @@ The allowlist (`instapuller/sites/__init__.py` → `ALLOWED_SITES`) currently co
 - attributes: `site_id` (also the cooldown state key: lowercase letters, digits and `_`, not `last_request_at` / `written_at`), `hosts` (normalized hosts without `www.` / `m.`), `allowed_extractors` (yt-dlp extractor keys), `format` (yt-dlp format selector) and `requires_js_runtime`;
 - `parse_url(url)`: validate and canonicalize the link (`LINK_GECERSIZ` on failure);
 - `extra_ydl_opts(js_runtime)`: site-specific yt-dlp options;
-- `check_info(info, max_duration_s, max_bytes)`: reject unsuitable metadata before downloading;
-- `map_error(exc, allowed_paths=...)`: map yt-dlp/infrastructure errors to a sanitized `PullError`;
+- `check_info(info, max_duration_s)`: reject unsuitable metadata before downloading;
+- `map_error(exc, *, allowed_paths=(), warnings=())`: map yt-dlp/infrastructure errors to a sanitized `PullError` (`warnings` are the yt-dlp warning lines collected during the run; YouTube uses them to detect JS-challenge failures);
 - `extract_meta(info, parsed, duration_s=...)`: build the `SourceMeta`.
 
 Cooldown state, JS runtime lookup and the JSON contract are handled by the shared code, so the public interface does not change.
