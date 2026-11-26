@@ -81,7 +81,7 @@ def test_corrupt_state_instagram(tmp_path):
     assert _lim(state, clock, "instagram").acquire() == 0.0
 
 
-@pytest.mark.parametrize("site", ["", "YouTube", "1abc", "a-b", "a" * 33, "x y"])
+@pytest.mark.parametrize("site", ["", "YouTube", "1abc", "a-b", "a" * 33, "x y", "written_at", "last_request_at"])
 def test_invalid_site(tmp_path, site):
     with pytest.raises(ValueError):
         CooldownLimiter(tmp_path / "s.json", site=site)

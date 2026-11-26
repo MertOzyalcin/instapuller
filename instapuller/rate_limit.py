@@ -24,6 +24,8 @@ _REPLACE_ATTEMPTS = 20
 _REPLACE_POLL_S = 0.05
 DEFAULT_SITE = "instagram"
 _SITE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+# Top-level keys of the Instagram record; a nested site record may not use these names.
+_RESERVED_KEYS = frozenset({"last_request_at", "written_at"})
 
 
 def default_state_file() -> Path:
@@ -84,7 +86,11 @@ class CooldownLimiter:
         clock: Callable[[], float] = time.time,
         sleeper: Callable[[float], None] = time.sleep,
     ):
-        if not isinstance(site, str) or not _SITE_RE.fullmatch(site):
+        if (
+            not isinstance(site, str)
+            or not _SITE_RE.fullmatch(site)
+            or site in _RESERVED_KEYS
+        ):
             raise ValueError(f"Invalid site id: {site!r}")
         self.site = site
         self.state_file = Path(state_file)
