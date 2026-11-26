@@ -1,7 +1,7 @@
-"""İzin verilen siteler kayıt defteri.
+"""Registry of allowed sites.
 
-Yeni bir platform (ör. YouTube) eklendiğinde yalnızca yeni bir SiteAdapter yazılıp
-ALLOWED_SITES sözlüğüne kaydedilir; dış arayüz değişmez.
+To add a platform (e.g. YouTube), write a new SiteAdapter and register it in the
+ALLOWED_SITES dictionary; the public interface does not change.
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ def _normalize_host(raw_host: str | None) -> str:
 
 
 def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
-    """URL'yi izin listesine göre doğrular ve ilgili site bağdaştırıcısını döndürür."""
+    """Validate the URL against the allowlist and return the matching site adapter."""
     raw = (url or "").strip()
     if not raw:
         raise PullError(
             "LINK_GECERSIZ",
-            "Link boş olamaz. Instagram linki girin veya videoyu dosya olarak yükleyin.",
+            "The link cannot be empty. Enter an Instagram link or upload the video as a file.",
         )
     if "://" not in raw:
         raw = "https://" + raw
@@ -48,19 +48,19 @@ def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
     except ValueError:
         raise PullError(
             "LINK_GECERSIZ",
-            "Link biçimi geçersiz. Instagram linki girin veya videoyu dosya olarak yükleyin.",
+            "The link format is invalid. Enter an Instagram link or upload the video as a file.",
         ) from None
 
     if parts.scheme not in ("http", "https"):
         raise PullError(
             "LINK_GECERSIZ",
-            "Yalnızca web linkleri desteklenir. Videoyu dosya olarak yükleyin.",
+            "Only web links are supported. Upload the video as a file instead.",
         )
 
     if not authority_is_clean(parts):
         raise PullError(
             "LINK_GECERSIZ",
-            "Link biçimi geçersiz. Instagram linki girin veya videoyu dosya olarak yükleyin.",
+            "The link format is invalid. Enter an Instagram link or upload the video as a file.",
         )
 
     host = _normalize_host(parts.hostname)
@@ -71,5 +71,5 @@ def parse_url(url: str) -> tuple[SiteAdapter, ParsedLink]:
     supported = ", ".join(sorted(allowed_hosts()))
     raise PullError(
         "LINK_GECERSIZ",
-        f"Bu site desteklenmiyor (izin verilen: {supported}). Videoyu dosya olarak yükleyin.",
+        f"This site is not supported (allowed: {supported}). Upload the video as a file instead.",
     )

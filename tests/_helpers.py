@@ -1,4 +1,4 @@
-"""Ağsız entegrasyon testleri için ortak yardımcılar (test dosyası değil)."""
+"""Shared helpers for offline integration tests (not a test file)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import yt_dlp
 
 
 class NoWaitLimiter:
-    """Hiç beklemeyen sahte limiter (üretim kodunda cooldown kapatılamaz)."""
+    """Fake limiter that never waits (the cooldown cannot be disabled in production code)."""
 
     def acquire(self, *, wait: bool = True) -> float:
         return 0.0
@@ -54,7 +54,7 @@ def instagram_info(media_url: str, *, video_id: str = "Chunk8-jurw", **extra: An
 
 
 def real_ydl_factory(info: dict[str, Any]):
-    """Gerçek YoutubeDL; yalnızca extract_info sahte (ağsız). process_ie_result gerçek."""
+    """Real YoutubeDL; only extract_info is faked (offline). process_ie_result is real."""
 
     class _YDL(yt_dlp.YoutubeDL):
         def extract_info(self, url, download=False, *a, **k):  # noqa: ANN001
@@ -82,7 +82,7 @@ def serve_directory(directory: Path) -> tuple[ThreadingHTTPServer, str]:
 
 
 def serve_chunked(total_bytes: int, chunk: int = 64 * 1024) -> tuple[ThreadingHTTPServer, str, _Counter]:
-    """Content-Length göndermeyen (chunked) sunucu; gönderilen baytı sayar."""
+    """Server sending no Content-Length (chunked); counts the bytes sent."""
     counter = _Counter()
     payload = os.urandom(chunk)
 
@@ -120,7 +120,7 @@ def find_tool(env_names: tuple[str, ...], exe: str) -> str:
     found = shutil.which(exe)
     if found:
         return found
-    pytest.skip(f"{exe} bulunamadı ({'/'.join(env_names)} ya da PATH)")
+    pytest.skip(f"{exe} not found ({'/'.join(env_names)} or PATH)")
 
 
 def find_ffmpeg() -> str:
@@ -141,7 +141,7 @@ def find_ffprobe() -> str:
 
 
 def make_video(path: Path, seconds: int) -> None:
-    """Test anında küçük H.264 video üretir (repoya medya girmez)."""
+    """Generate a small H.264 video at test time (no media is committed to the repo)."""
     ffmpeg = find_ffmpeg()
     subprocess.run(
         [

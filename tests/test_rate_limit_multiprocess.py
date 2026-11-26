@@ -1,4 +1,4 @@
-"""Gerçek saat ve gerçek ayrı süreçlerle cooldown doğrulaması (~30 sn sürer)."""
+"""Verify the cooldown with the real clock and real separate processes (takes ~30 s)."""
 
 import json
 import os
@@ -30,7 +30,7 @@ def _collect(proc: subprocess.Popen) -> dict:
 
 def test_three_processes_are_serialized_15s_apart_and_no_wait_is_side_effect_free(tmp_path):
     state = tmp_path / "rate_limit.json"
-    start_at = time.time() + 4.0  # alt süreçlerin Python başlatması için pay
+    start_at = time.time() + 4.0  # allowance for subprocess Python startup
     procs = [_spawn(state, start_at, "wait") for _ in range(3)]
     results = [_collect(p) for p in procs]
 
@@ -40,11 +40,11 @@ def test_three_processes_are_serialized_15s_apart_and_no_wait_is_side_effect_fre
         assert r["t"] is not None
 
     times = sorted(r["t"] for r in results)
-    assert times[0] - start_at <= 1.0, "ilk geçiş beklememeli"
+    assert times[0] - start_at <= 1.0, "the first pass must not wait"
     gaps = [b - a for a, b in zip(times, times[1:])]
     assert all(g >= 14.8 for g in gaps), gaps
 
-    # wait=False: cooldown sürüyor -> IG_COOLDOWN, state değişmemeli
+    # wait=False: cooldown active -> IG_COOLDOWN, state must not change
     before = state.read_text(encoding="utf-8")
     probe = _collect(_spawn(state, time.time(), "nowait"))
     assert probe["code"] == "IG_COOLDOWN", probe
@@ -52,5 +52,5 @@ def test_three_processes_are_serialized_15s_apart_and_no_wait_is_side_effect_fre
     assert 0 < probe["retry_after_s"] <= 15.0
     assert state.read_text(encoding="utf-8") == before
     assert json.loads(before)["last_request_at"] > 0
-    # tmp artığı kalmamalı
+    # no leftover tmp files
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []

@@ -4,9 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "instapuller"
-version = "0.1.0"
-description = "Yerel uygulamalar için anonim Instagram video/Reel indirme ve metrik aracı"
+version = "0.2.0"
+description = "Anonymous Instagram video/Reel download and metrics tool for local applications"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "yt-dlp==2026.11.23",

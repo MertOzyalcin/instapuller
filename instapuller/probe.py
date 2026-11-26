@@ -1,4 +1,4 @@
-"""İndirilen videonun süresini ffprobe ile ölçme."""
+"""Measure the duration of a downloaded video with ffprobe."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ def resolve_ffprobe(ffprobe_bin: str | Path | None = None) -> str:
 
     raise PullError(
         "FFPROBE_YOK",
-        "Kurulum eksik: videonun süresi ölçülemiyor. Kurulumu tamamlayıp tekrar deneyin.",
-        detail="ffprobe bulunamadı; --ffprobe-bin veya INSTAPULLER_FFPROBE_BIN ile yolunu verin ya da PATH'e ekleyin.",
+        "Setup is incomplete: the video duration cannot be measured. Finish the setup and try again.",
+        detail="ffprobe not found; pass its path with --ffprobe-bin or INSTAPULLER_FFPROBE_BIN, or add it to PATH.",
     )
 
 
@@ -44,7 +44,7 @@ def probe_duration(
     *,
     ffprobe_bin: str | Path | None = None,
 ) -> float:
-    """ffprobe ile videonun süresini saniye cinsinden döndürür."""
+    """Return the video duration in seconds using ffprobe."""
     exe = resolve_ffprobe(ffprobe_bin)
     try:
         proc = subprocess.run(
@@ -66,14 +66,14 @@ def probe_duration(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PullError(
             "DOSYA_BOZUK",
-            "İndirilen video okunamadı. Videoyu dosya olarak yükleyin.",
+            "The downloaded video could not be read. Upload the video as a file instead.",
             detail=sanitize_detail(str(exc)),
         ) from None
 
     if proc.returncode != 0:
         raise PullError(
             "DOSYA_BOZUK",
-            "İndirilen video bozuk görünüyor veya okunamadı. Videoyu dosya olarak yükleyin.",
+            "The downloaded video appears to be corrupt or unreadable. Upload the video as a file instead.",
             detail=sanitize_detail(proc.stderr),
         )
 
@@ -83,14 +83,14 @@ def probe_duration(
     except ValueError:
         raise PullError(
             "DOSYA_BOZUK",
-            "İndirilen videonun süresi belirlenemedi. Videoyu dosya olarak yükleyin.",
-            detail=sanitize_detail(f"ffprobe çıktısı geçersiz: {raw_out}"),
+            "The duration of the downloaded video could not be determined. Upload the video as a file instead.",
+            detail=sanitize_detail(f"Invalid ffprobe output: {raw_out}"),
         ) from None
 
     if duration <= 0:
         raise PullError(
             "DOSYA_BOZUK",
-            "İndirilen videonun süresi geçersiz. Videoyu dosya olarak yükleyin.",
+            "The downloaded video has an invalid duration. Upload the video as a file instead.",
         )
 
     return duration

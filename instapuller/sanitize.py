@@ -1,4 +1,4 @@
-"""Hata detaylarını temizleme: yerel dosya yollarını gizler ve uzunluğu sınırlar."""
+"""Sanitize error details: hide local file paths and limit length."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from pathlib import Path
 
 MAX_DETAIL_LEN = 500
 
-# Windows sürücü yolu (C:\..., D:/... ama http:// veya https:// değil) ve UNC yolu (\\server\...)
+# Windows drive paths (C:\..., D:/... but not http:// or https://) and UNC paths (\\server\...)
 _WIN_PATH_RE = re.compile(r"(?:(?<![A-Za-z0-9])[A-Za-z]:(?:\\|/(?!/))|\\\\)[^\s'\"<>|]+")
-# POSIX yerel yolları (/Users/..., /home/..., /tmp/..., /var/..., vb.)
+# POSIX local paths (/Users/..., /home/..., /tmp/..., /var/..., etc.)
 _POSIX_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9:._-])/(?:Users|home|tmp|var|etc|opt|srv|root|mnt|media|private)/[^\s'\"<>|]+"
 )
@@ -22,7 +22,7 @@ def sanitize_detail(
     max_len: int = MAX_DETAIL_LEN,
     allowed_paths: Iterable[str | Path] = (),
 ) -> str | None:
-    """Hata detayından yerel yolları temizler ve en fazla `max_len` karakter döndürür."""
+    """Remove local paths from an error detail and return at most `max_len` characters."""
     if not raw:
         return None
 

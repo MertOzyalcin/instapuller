@@ -1,4 +1,4 @@
-"""JSON çıktılı CLI arayüzü (subprocess entegrasyonu için)."""
+"""CLI with JSON output (for subprocess integration)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _emit(payload: dict) -> None:
 
 
 class _ArgError(Exception):
-    """argparse hatasını JSON'a çevirmek için iç istisna."""
+    """Internal exception used to turn argparse errors into JSON."""
 
 
 class _JsonArgumentParser(argparse.ArgumentParser):
@@ -40,23 +40,23 @@ class _JsonArgumentParser(argparse.ArgumentParser):
 def _build_parser() -> argparse.ArgumentParser:
     parser = _JsonArgumentParser(
         prog="instapuller",
-        description="Anonim Instagram video/Reel indirme ve metrik aracı (JSON CLI).",
+        description="Anonymous Instagram video/Reel download and metrics tool (JSON CLI).",
     )
     sub = parser.add_subparsers(dest="command", required=True, parser_class=_JsonArgumentParser)
 
-    fetch_p = sub.add_parser("fetch", help="Verilen linkteki videoyu indirir ve metrikleri döner.")
-    fetch_p.add_argument("url", help="Instagram Reel veya tekil video linki.")
+    fetch_p = sub.add_parser("fetch", help="Download the video at the given link and return its metrics.")
+    fetch_p.add_argument("url", help="Instagram Reel or single video link.")
     fetch_p.add_argument(
         "--out-dir",
         type=Path,
         default=None,
-        help="Videonun indirileceği klasör.",
+        help="Directory to download the video into.",
     )
     fetch_p.add_argument(
         "--keep-video",
         action="store_true",
         default=False,
-        help="Videoyu kalıcı olarak sakla (varsayılan: kapalı / geçici).",
+        help="Keep the video permanently (default: off / temporary).",
     )
     wait_group = fetch_p.add_mutually_exclusive_group()
     wait_group.add_argument(
@@ -64,47 +64,47 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="wait",
         action="store_true",
         default=True,
-        help="Cooldown süresini bekleyip devam et (varsayılan).",
+        help="Wait out the cooldown, then continue (default).",
     )
     wait_group.add_argument(
         "--no-wait",
         dest="wait",
         action="store_false",
-        help="Cooldown dolmadıysa beklemeden IG_COOLDOWN hatası döndür.",
+        help="If the cooldown has not elapsed, return IG_COOLDOWN without waiting.",
     )
     fetch_p.add_argument(
         "--cooldown",
         type=float,
         default=DEFAULT_COOLDOWN_S,
-        help=f"İstekler arası bekleme süresi, saniye (varsayılan ve alt sınır: {int(MIN_COOLDOWN_S)}).",
+        help=f"Delay between requests in seconds (default and minimum: {int(MIN_COOLDOWN_S)}).",
     )
     fetch_p.add_argument(
         "--max-duration",
         type=float,
         default=DEFAULT_MAX_DURATION_S,
-        help=f"Azami video süresi, saniye (varsayılan: {int(DEFAULT_MAX_DURATION_S)}).",
+        help=f"Maximum video duration in seconds (default: {int(DEFAULT_MAX_DURATION_S)}).",
     )
     fetch_p.add_argument(
         "--max-size-mb",
         type=int,
         default=DEFAULT_MAX_FILESIZE_MB,
-        help=f"Azami dosya boyutu, MB (varsayılan: {DEFAULT_MAX_FILESIZE_MB}).",
+        help=f"Maximum file size in MB (default: {DEFAULT_MAX_FILESIZE_MB}).",
     )
     fetch_p.add_argument(
         "--ffprobe-bin",
         type=Path,
         default=None,
-        help="ffprobe yürütülebilir dosyasının yolu (opsiyonel).",
+        help="Path to the ffprobe executable (optional).",
     )
     fetch_p.add_argument(
         "--state-file",
         type=Path,
         default=None,
-        help="Cooldown durum dosyasının yolu (varsayılan: kullanıcıya özgü sabit yol).",
+        help="Path to the cooldown state file (default: a fixed per-user path).",
     )
 
-    clean_p = sub.add_parser("cleanup", help="İndirilen geçici video dosyasını güvenli biçimde siler.")
-    clean_p.add_argument("path", type=Path, help="Silinecek video dosyasının yolu.")
+    clean_p = sub.add_parser("cleanup", help="Safely delete a downloaded temporary video file.")
+    clean_p.add_argument("path", type=Path, help="Path of the video file to delete.")
 
     return parser
 
@@ -112,7 +112,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _arg_error(detail: str) -> int:
     err = PullError(
         "ARG_GECERSIZ",
-        "Komut satırı argümanları geçersiz.",
+        "Invalid command-line arguments.",
         detail=sanitize_detail(detail),
     )
     _emit(err.to_dict())
@@ -125,12 +125,12 @@ def _run(argv: list[str] | None) -> int:
         args = parser.parse_args(argv)
     except _ArgError as exc:
         return _arg_error(str(exc))
-    except SystemExit as exc:  # -h/--help: JSON üretmeyen tek istisna
+    except SystemExit as exc:  # -h/--help: the only case that does not produce JSON
         return int(exc.code or 0)
 
     if args.command == "fetch":
         if not (args.cooldown >= MIN_COOLDOWN_S):
-            return _arg_error(f"--cooldown en az {int(MIN_COOLDOWN_S)} saniye olmalı.")
+            return _arg_error(f"--cooldown must be at least {int(MIN_COOLDOWN_S)} seconds.")
         try:
             result = fetch_video(
                 args.url,
@@ -158,7 +158,7 @@ def _run(argv: list[str] | None) -> int:
     except Exception as exc:
         err = PullError(
             "SILME_HATASI",
-            "Dosya silinemedi.",
+            "The file could not be deleted.",
             detail=sanitize_detail(f"{type(exc).__name__}: {exc}"),
         )
         _emit(err.to_dict())
@@ -170,7 +170,7 @@ def _run(argv: list[str] | None) -> int:
 def _unexpected(exc: BaseException) -> PullError:
     return PullError(
         "BEKLENMEYEN_HATA",
-        "Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.",
+        "An unexpected error occurred. Please try again.",
         detail=sanitize_detail(f"{type(exc).__name__}: {exc}"),
     )
 
@@ -179,9 +179,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run(argv)
     except KeyboardInterrupt:
-        _emit(PullError("BEKLENMEYEN_HATA", "İşlem iptal edildi.").to_dict())
+        _emit(PullError("BEKLENMEYEN_HATA", "The operation was cancelled.").to_dict())
         return EXIT_INTERRUPTED
-    except Exception as exc:  # son çare: çıktı her zaman JSON
+    except Exception as exc:  # last resort: output is always JSON
         _emit(_unexpected(exc).to_dict())
         return EXIT_ERROR
 

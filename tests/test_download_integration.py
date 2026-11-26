@@ -1,6 +1,5 @@
-"""Ağsız entegrasyon testleri: gerçek yt-dlp, yerel sunucular, gerçek ffprobe ve alt süreç CLI.
+"""Offline integration tests: real yt-dlp, local servers, real ffprobe and the CLI in a subprocess.
 
-Tur 2 bulguları: Ö2, Ö3, Ö4, Ö7, S3, S4, S5, S6, S7 (Ö9: kalıcı gerçek testler).
 """
 
 from __future__ import annotations
@@ -64,11 +63,11 @@ def _err(fn) -> PullError:
     return exc_info.value
 
 
-# --- Ö2 / Ö3: boyut sınırı indirme sırasında --------------------------------
+# --- size limit during download --------------------------------
 
 
 def test_content_length_over_limit_is_dosya_buyuk_not_kaynak_gecici(tmp_path):
-    """Ö3: yt-dlp Content-Length bilince istisnasız atlar; logger bayrağı DOSYA_BUYUK vermeli."""
+    """With a known Content-Length yt-dlp skips without raising; the logger flag must yield DOSYA_BUYUK."""
     media = tmp_path / "srv"
     media.mkdir()
     (media / "v.mp4").write_bytes(os.urandom(3 * MB))
@@ -83,7 +82,7 @@ def test_content_length_over_limit_is_dosya_buyuk_not_kaynak_gecici(tmp_path):
 
 
 def test_chunked_stream_without_content_length_is_aborted_midway(tmp_path):
-    """Ö2: Content-Length yok; sınır aşılınca indirme kesilmeli, tamamı inmemeli."""
+    """No Content-Length; the download must abort at the limit instead of completing."""
     total = 40 * MB
     server, url, counter = serve_chunked(total)
     try:
@@ -93,12 +92,12 @@ def test_chunked_stream_without_content_length_is_aborted_midway(tmp_path):
     finally:
         server.shutdown()
     assert err.code == "DOSYA_BUYUK"
-    assert counter.sent < total, "tamamı indirildi"
-    assert counter.sent <= 1 * MB + 12 * MB, counter.sent  # soket tamponları için makul pay
+    assert counter.sent < total, "the whole file was downloaded"
+    assert counter.sent <= 1 * MB + 12 * MB, counter.sent  # reasonable allowance for socket buffers
     assert list(out.iterdir()) == []
 
 
-# --- S5 / S6 / S7 ------------------------------------------------------------
+# --- extractor, output template and downloaded file ------------------------------------------------------------
 
 
 def test_foreign_extractor_key_is_ig_arac_guncel_degil(tmp_path):
@@ -174,7 +173,7 @@ def test_find_downloaded_file_prefers_reported_path_and_ignores_partials(tmp_pat
         p.write_bytes(b"x")
     assert dl._find_downloaded_file({"requested_downloads": [{"filepath": str(other)}]}, {}, staging) == other
     assert dl._find_downloaded_file({"filepath": str(good)}, {}, staging) == good
-    assert dl._find_downloaded_file(None, {}, staging) == good  # sıralı ilk gerçek dosya
+    assert dl._find_downloaded_file(None, {}, staging) == good  # first real file in sorted order
 
     only_partials = tmp_path / "ip_y"
     only_partials.mkdir()
@@ -191,7 +190,7 @@ def test_reported_filepath_outside_staging_is_ignored(tmp_path):
     assert dl._find_downloaded_file({"filepath": str(outside)}, {}, staging) is None
 
 
-# --- süre: gerçek ffprobe -----------------------------------------------------
+# --- duration: real ffprobe -----------------------------------------------------
 
 
 def test_video_uzun_with_real_ffprobe_and_file_removed(tmp_path):
@@ -214,7 +213,7 @@ def test_video_uzun_with_real_ffprobe_and_file_removed(tmp_path):
     finally:
         server.shutdown()
     assert err.code == "VIDEO_UZUN"
-    assert "185 saniyeyi" in err.message
+    assert "longer than 185 seconds" in err.message
     assert list(out.iterdir()) == []
 
 
@@ -238,7 +237,7 @@ def test_real_video_success_with_real_ffprobe(tmp_path):
     assert res.video_path.is_file()
 
 
-# --- CLI başarı yolu (alt süreç, Türkçe yol) ---------------------------------
+# --- CLI success path (subprocess, non-ASCII path) ---------------------------------
 
 
 def test_cli_success_single_json_line_utf8_with_turkish_out_dir(tmp_path):
@@ -269,7 +268,7 @@ def test_cli_success_single_json_line_utf8_with_turkish_out_dir(tmp_path):
     assert proc.stderr == b""
 
 
-# --- iptal / temizlik --------------------------------------------------------
+# --- cancel / cleanup --------------------------------------------------------
 
 
 def test_keyboard_interrupt_during_download_leaves_no_staging(tmp_path):
@@ -300,14 +299,14 @@ def test_stale_staging_dirs_are_purged_but_fresh_and_unprefixed_stay(tmp_path):
     out.mkdir()
     old = out / "ip_x_old"
     fresh = out / "ip_x_fresh"
-    other = out / "baska_klasor"
+    other = out / "other_dir"
     for d in (old, fresh, other):
         d.mkdir()
         (d / "f.part").write_bytes(b"x")
     two_hours_ago = time.time() - 7200
     os.utime(old, (two_hours_ago, two_hours_ago))
     os.utime(other, (two_hours_ago, two_hours_ago))
-    plain_old_file = out / "ip_dosya.txt"
+    plain_old_file = out / "ip_file.txt"
     plain_old_file.write_bytes(b"x")
     os.utime(plain_old_file, (two_hours_ago, two_hours_ago))
 
@@ -325,12 +324,12 @@ def test_stale_staging_dirs_are_purged_but_fresh_and_unprefixed_stay(tmp_path):
     assert dl.STALE_STAGING_AGE_S == 3600.0
 
 
-# --- S3: cleanup yalnızca üretilen adları siler ------------------------------
+# --- cleanup only deletes generated names ------------------------------
 
 
 def test_cleanup_refuses_arbitrary_files_but_deletes_generated_names(tmp_path):
-    random_file = tmp_path / "notlarim.txt"
-    random_file.write_text("önemli", encoding="utf-8")
+    random_file = tmp_path / "notes.txt"
+    random_file.write_text("important", encoding="utf-8")
     with pytest.raises(ValueError):
         cleanup_file(random_file)
     assert random_file.exists()
@@ -349,7 +348,7 @@ def test_cleanup_refuses_arbitrary_files_but_deletes_generated_names(tmp_path):
 
 
 def test_cli_cleanup_of_random_file_is_silme_hatasi(tmp_path):
-    f = tmp_path / "onemli.docx"
+    f = tmp_path / "important.docx"
     f.write_bytes(b"x")
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     proc = subprocess.run(
@@ -361,17 +360,17 @@ def test_cli_cleanup_of_random_file_is_silme_hatasi(tmp_path):
     assert f.exists()
 
 
-# --- S4: site listesi -------------------------------------------------------
+# --- site allowlist -------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "bad",
     [
-        "https://instagram.com.kotu.com/reel/Chunk8-jurw/",
-        "https://kotu.com/instagram.com/reel/Chunk8-jurw/",
-        "https://instagram.com@kotu.com/reel/Chunk8-jurw/",
-        "https://kullanici@instagram.com/reel/Chunk8-jurw/",
-        "https://a:b@kotu.com@instagram.com/reel/Chunk8-jurw/",
+        "https://instagram.com.evil.com/reel/Chunk8-jurw/",
+        "https://evil.com/instagram.com/reel/Chunk8-jurw/",
+        "https://instagram.com@evil.com/reel/Chunk8-jurw/",
+        "https://user@instagram.com/reel/Chunk8-jurw/",
+        "https://a:b@evil.com@instagram.com/reel/Chunk8-jurw/",
         "https://instagram.com:8080/reel/Chunk8-jurw/",
         "https://instagram.com:99999/reel/Chunk8-jurw/",
         "https://www.instagram.com/reel/--------/",
@@ -403,7 +402,7 @@ def test_adapter_parse_url_also_checks_authority():
     assert err.code == "LINK_GECERSIZ"
 
 
-# --- Ö4: map_error gerçek yt-dlp mesajları ve istisna türleri ---------------
+# --- map_error with real yt-dlp messages and exception types ---------------
 
 
 def _http_error(status: int, reason: str = "x") -> HTTPError:
@@ -428,7 +427,7 @@ _DNS_MSG = (
 def _cases():
     dns_cause = TransportError(cause="getaddrinfo failed")
     return [
-        # (ad, istisna, beklenen kod)
+        # (name, exception, expected code)
         ("dns_text_only", RuntimeError(f"ERROR: [Instagram] Chunk8-jurw: {_DNS_MSG}"), "KAYNAK_GECICI"),
         (
             "dns_typed",
@@ -454,7 +453,7 @@ def _cases():
         ("http403_typed", _download_error(_http_error(403)), "IG_ERISILEMEDI"),
         ("http404_text", RuntimeError("Unable to download webpage: HTTP Error 404: Not Found"), "IG_ERISILEMEDI"),
         ("http401_typed", _download_error(_http_error(401)), "IG_ERISILEMEDI"),
-        # kısa kodda 429/403 geçen gönderilerin ilgisiz hataları sayıya göre eşlenmemeli
+        # unrelated errors on posts whose shortcode contains 429/403 must not be mapped by that number
         ("code_with_429", RuntimeError("ERROR: [Instagram] Cx429zAB: Unable to extract video url"), "IG_ARAC_GUNCEL_DEGIL"),
         ("code_with_403", RuntimeError("ERROR: [Instagram] Cx403zAB: Unable to extract video url"), "IG_ARAC_GUNCEL_DEGIL"),
         ("code_with_404", RuntimeError("ERROR: [Instagram] Cx404zAB: Something odd happened"), "KAYNAK_GECICI"),
@@ -518,7 +517,7 @@ def test_map_error_real_messages_and_exception_types(name, exc, code):
     assert err.upload_fallback is True
 
 
-# --- yt-dlp uyarılarının tanı için saklanması --------------------------------
+# --- keeping yt-dlp warnings for diagnostics --------------------------------
 
 
 def _run_fake_cli(tmp_path, extra_env):
@@ -533,7 +532,7 @@ def _run_fake_cli(tmp_path, extra_env):
     )
 
 
-_WARN = r"Unable to extract thing; C:\Users\mert\secret\dir\x.json is odd"
+_WARN = r"Unable to extract thing; C:\Users\someuser\secret\dir\x.json is odd"
 
 
 def test_cli_warning_goes_to_stderr_only_and_stdout_stays_single_json(tmp_path):
@@ -543,8 +542,8 @@ def test_cli_warning_goes_to_stderr_only_and_stdout_stays_single_json(tmp_path):
     assert len(lines) == 1
     assert json.loads(lines[0])["ok"] is True
     err = proc.stderr.decode("utf-8", "replace")
-    assert "instapuller: yt-dlp uyarısı: Unable to extract thing" in err
-    assert "mert" not in err and "[path]" in err
+    assert "instapuller: yt-dlp warning: Unable to extract thing" in err
+    assert "someuser" not in err and "[path]" in err
 
 
 def test_cli_quiet_env_silences_stderr(tmp_path):
@@ -564,8 +563,8 @@ def test_cli_failure_detail_has_warnings_even_when_quiet(tmp_path):
     lines = proc.stdout.decode("utf-8").splitlines()
     assert len(lines) == 1
     detail = json.loads(lines[0])["error"]["detail"]
-    assert "yt-dlp uyarıları:" in detail and "Unable to extract thing" in detail
-    assert len(detail) <= 500 and "mert" not in detail and "[path]" in detail
+    assert "yt-dlp warnings:" in detail and "Unable to extract thing" in detail
+    assert len(detail) <= 500 and "someuser" not in detail and "[path]" in detail
 
 
 class _WarnFailYDL:
@@ -580,8 +579,8 @@ class _WarnFailYDL:
 
     def extract_info(self, url, download=False):
         for i in range(30):
-            self.opts["logger"].warning(f"uyari {i} " + "x" * 120)
-        self.opts["logger"].error(r"ERROR: D:\gizli\klasor\a.mp4 okunamadi")
+            self.opts["logger"].warning(f"warning {i} " + "x" * 120)
+        self.opts["logger"].error(r"ERROR: D:\secret\folder\a.mp4 could not be read")
         raise RuntimeError("HTTP Error 500: Internal Server Error " + "y" * 300)
 
 
@@ -593,10 +592,10 @@ def test_fetch_video_failure_detail_capped_and_original_first(tmp_path, capsys):
     detail = ei.value.detail
     assert len(detail) <= 500
     assert detail.startswith("HTTP Error 500")
-    assert "yt-dlp uyarıları: uyari 0" in detail
+    assert "yt-dlp warnings: warning 0" in detail
     cap = capsys.readouterr()
     assert cap.out == ""
-    assert cap.err.count("instapuller: yt-dlp uyarısı:") == 31  # stderr her satırı yazar; detail için yalnızca ilk 10 saklanır
+    assert cap.err.count("instapuller: yt-dlp warning:") == 31  # stderr gets every line; only the first 10 are kept for detail
 
 
 def test_logger_keeps_at_most_ten_and_shortens_and_ignores_debug(capsys, monkeypatch):
@@ -617,7 +616,7 @@ def test_no_warnings_leaves_detail_untouched(tmp_path):
 
     with pytest.raises(PullError) as ei:
         fetch_video(URL, out_dir=tmp_path / "o", limiter=NoWaitLimiter(), ydl_factory=Y)
-    assert "uyarıları" not in (ei.value.detail or "")
+    assert "warnings" not in (ei.value.detail or "")
 
 
 def test_real_ytdlp_report_warning_reaches_logger(tmp_path, capsys):
@@ -625,12 +624,12 @@ def test_real_ytdlp_report_warning_reaches_logger(tmp_path, capsys):
 
     def factory(opts):
         ydl = base(opts)
-        ydl.report_warning("gercek uyari 123")
+        ydl.report_warning("real warning 123")
         raise_after = ydl
         return raise_after
 
     with pytest.raises(PullError) as ei:
         fetch_video(URL, out_dir=tmp_path / "o", limiter=NoWaitLimiter(), ydl_factory=factory)
-    # report_warning logger üzerinden gitti; hata sonradan (bağlantı) geldiyse detail'de olmalı
-    assert "gercek uyari 123" in capsys.readouterr().err
-    assert "gercek uyari 123" in (ei.value.detail or "")
+    # report_warning went through the logger; a later (connection) error must carry it in detail
+    assert "real warning 123" in capsys.readouterr().err
+    assert "real warning 123" in (ei.value.detail or "")

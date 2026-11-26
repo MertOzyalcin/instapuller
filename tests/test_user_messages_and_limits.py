@@ -1,4 +1,4 @@
-"""Kullanıcı mesajları, süre sınırı, cooldown alt sınırı (S1/S2) ve varsayılan state yolu (Ö1)."""
+"""User messages, duration limit, cooldown minimum and default state path."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _collect_errors(tmp_path: Path, monkeypatch) -> list[PullError]:
     errs: list[PullError] = []
     adapter = InstagramAdapter()
 
-    # map_error dalları
+    # map_error branches
     for exc in (
         RuntimeError("HTTP Error 429: Too Many Requests"),
         RuntimeError("File is larger than max-filesize"),
@@ -51,18 +51,18 @@ def _collect_errors(tmp_path: Path, monkeypatch) -> list[PullError]:
     ):
         errs.append(adapter.map_error(exc))
 
-    # downloader yolları
+    # downloader paths
     errs.append(_error_from(lambda: _fetch(tmp_path, info={"_type": "playlist", "entries": []})))
-    errs.append(_error_from(lambda: _fetch(tmp_path, info=["bozuk"])))
-    errs.append(_error_from(lambda: _fetch(tmp_path, write_bytes=None)))  # dosya inmedi
+    errs.append(_error_from(lambda: _fetch(tmp_path, info=["broken"])))
+    errs.append(_error_from(lambda: _fetch(tmp_path, write_bytes=None)))  # no file downloaded
     errs.append(_error_from(lambda: _fetch(tmp_path, duration=500.0)))
     errs.append(_error_from(lambda: _fetch(tmp_path, write_bytes=2 * 1024 * 1024, max_filesize_mb=1)))
 
-    # link ayrıştırma
+    # link parsing
     for bad in ("", "ftp://instagram.com/reel/abcde/", "https://example.com/x", "https://instagram.com/", "%%%"):
         errs.append(_error_from(lambda bad=bad: parse_url(bad)))
 
-    # probe yolları
+    # probe paths
     monkeypatch.delenv("INSTAPULLER_FFPROBE_BIN", raising=False)
     monkeypatch.delenv("FFPROBE_BIN", raising=False)
     monkeypatch.setattr(probe_mod.shutil, "which", lambda *_a, **_k: None)
@@ -106,14 +106,14 @@ def test_user_messages_have_no_technical_terms_and_fallback_ones_point_to_upload
         for word in FORBIDDEN:
             assert word not in e.message, (e.code, e.message)
         if e.upload_fallback:
-            assert "yükleyin" in e.message, (e.code, e.message)
+            assert "upload" in e.message.lower(), (e.code, e.message)
 
 
 def test_tool_outdated_message_and_detail(tmp_path):
     err = InstagramAdapter().map_error(RuntimeError("Unable to extract video url"))
     assert err.code == "IG_ARAC_GUNCEL_DEGIL"
-    assert err.message == "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin."
-    assert err.detail.startswith("yt-dlp güncel olmayabilir; README'deki güncelleme adımına bakın.")
+    assert err.message == "Instagram's response could not be read. Upload the video as a file instead."
+    assert err.detail.startswith("yt-dlp may be outdated; see the update step in the README.")
     assert "Unable to extract video url" in err.detail
 
 
@@ -127,7 +127,7 @@ def test_ffprobe_missing_details_go_to_detail(monkeypatch):
     assert "--ffprobe-bin" in err.detail and "INSTAPULLER_FFPROBE_BIN" in err.detail
 
 
-# --- süre sınırı -------------------------------------------------------------
+# --- duration limit -------------------------------------------------------------
 
 
 def test_default_max_duration_is_185():
@@ -140,13 +140,13 @@ def test_duration_184_9_passes_and_185_2_rejected_with_number_from_limit(tmp_pat
 
     err = _error_from(lambda: _fetch(tmp_path, duration=185.2))
     assert err.code == "VIDEO_UZUN"
-    assert "185 saniyeyi" in err.message
+    assert "longer than 185 seconds" in err.message
 
     err = _error_from(lambda: _fetch(tmp_path, duration=61.0, max_duration_s=60.0))
-    assert "60 saniyeyi" in err.message and "185" not in err.message
+    assert "longer than 60 seconds" in err.message and "185" not in err.message
 
 
-# --- S1 / S2 -----------------------------------------------------------------
+# --- cooldown minimum and clock safety -----------------------------------------------------------------
 
 
 def test_cooldown_cannot_go_below_15(tmp_path):
@@ -157,7 +157,7 @@ def test_cooldown_cannot_go_below_15(tmp_path):
 
 def test_fetch_video_clamps_cooldown_to_15(tmp_path):
     state = tmp_path / "s.json"
-    CooldownLimiter(state).acquire()  # gerçek saatle az önce istek yapılmış
+    CooldownLimiter(state).acquire()  # a request was just made, on the real clock
     err = _error_from(
         lambda: fetch_video(
             "https://www.instagram.com/reel/Chunk8-jurw/",
@@ -196,7 +196,7 @@ def test_no_wait_does_not_write_state(tmp_path):
     assert state.read_text(encoding="utf-8") == before
 
 
-# --- Ö1 ----------------------------------------------------------------------
+# --- default state path ----------------------------------------------------------------------
 
 
 def test_default_state_file_env_override(monkeypatch, tmp_path):
@@ -228,7 +228,7 @@ def test_default_state_file_independent_of_cwd(monkeypatch, tmp_path):
 
 
 def test_parallel_queue_slots_advance_15s_apart(tmp_path):
-    """Aynı anda gelen istekler (sleeper atlanarak) 0/15/30 sn yuvalara dizilir."""
+    """Simultaneous requests (sleeper bypassed) are placed in 0/15/30 s slots."""
     now = 5000.0
     slept: list[float] = []
     state = tmp_path / "s.json"

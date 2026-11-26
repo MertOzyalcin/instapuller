@@ -1,4 +1,4 @@
-"""Link ayrıştırma ve site izin listesi birim testleri."""
+"""Unit tests for link parsing and the site allowlist."""
 
 import pytest
 
@@ -68,7 +68,7 @@ def test_parse_valid_instagram_links(raw_url, expected_id, expected_kind, expect
         "https://www.instagram.com/nasa/",
         "https://www.instagram.com/stories/nasa/12345/",
         "https://www.instagram.com/share/BA-Zo3dPT0",
-        "https://www.instagram.com/reel/ab/",  # çok kısa shortcode
+        "https://www.instagram.com/reel/ab/",  # shortcode too short
     ],
 )
 def test_reject_non_allowlisted_and_invalid_links(bad_url):

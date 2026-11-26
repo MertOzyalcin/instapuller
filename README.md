@@ -1,68 +1,70 @@
 # instapuller
 
-Yerel uygulamalar (özellikle `autocript`) için **anonim** Instagram video/Reel indirme ve metrik çıkarma aracı.
-JSON çıktılı CLI (`subprocess`) ve doğrudan import edilebilir Python API sunar; ayrı bir HTTP servisi gerektirmez.
+An **anonymous** Instagram video/Reel download and metrics tool for local applications (in particular `autocript`).
+It provides a CLI with JSON output (`subprocess`) and a directly importable Python API; no separate HTTP service is needed.
 
-> **Güvenlik ve Sınırlar:** Oturum/giriş kullanılmaz; **hesap riski yok, IP geçici olarak kısıtlanabilir.** Bu riski azaltmak için ardışık istekler arasında varsayılan **15 saniye** bekleme (cooldown) uygulanır.
+> **Safety and limits:** No session or login is used, so **there is no account risk; your IP may be temporarily rate limited.** To reduce that risk, a **15 second** cooldown is enforced between consecutive requests by default.
 
-## Kullanım ve Sorumluluk
+> **Note on error codes:** The error codes are mostly Turkish identifiers (for example `KAYNAK_GECICI`). They are a stable contract with `autocript` and are not translated; the [error code table](#error-codes) gives the English meaning of each one.
 
-- Bu araç **kişisel kullanım** içindir.
-- Instagram'ın [Kullanım Şartları](https://help.instagram.com/581066165581870)'na ve içeriklerin **telif haklarına** uymak tamamen kullanıcının sorumluluğundadır. Hakkınız olmayan içeriği indirmeyin, yeniden yayımlamayın.
-- Araç **hesap ya da çerez kullanmaz**: giriş yapılmaz, oturum bilgisi okunmaz; yalnızca herkese açık gönderilere erişilebilir.
+## Usage and Responsibility
 
-## Kurulum
+- This tool is for **personal use**.
+- Complying with Instagram's [Terms of Use](https://help.instagram.com/581066165581870) and with the **copyright** of any content is entirely the user's responsibility. Do not download or republish content you have no rights to.
+- The tool **uses no account or cookies**: it does not log in or read session data; only publicly available posts can be accessed.
+
+## Installation
 
 ```bash
 uv sync
 ```
 
-> Süre ölçümü için sistemde `ffprobe` bulunmalı veya `--ffprobe-bin` / `INSTAPULLER_FFPROBE_BIN` ile yolu verilmelidir.
+> Measuring duration requires `ffprobe` on the system, or its path given with `--ffprobe-bin` / `INSTAPULLER_FFPROBE_BIN`.
 
-## Cooldown ve State Dosyası
+## Cooldown and State File
 
-- Ardışık istekler arasında en az **15 sn** beklenir. `--cooldown` / `cooldown_s` 15'in altına **inemez**: Python API'de düşük değer sessizce 15'e yükseltilir, CLI'da `--cooldown` 15'ten küçükse `ARG_GECERSIZ` döner. Daha büyük değerlere izin verilir.
-- Bu kural **süreçler arası** korunur: state dosyasının yanındaki `<state>.lock` dosyası üzerinde işletim sistemi kilidi alınır, her süreç kendine bir zaman yuvası ayırır ve kilit dışında uyur. Aynı anda başlayan 3 süreç 15 sn arayla sıraya girer.
-- Varsayılan state dosyası çalışma klasöründen bağımsızdır. Öncelik sırası:
+- At least **15 s** pass between consecutive requests. `--cooldown` / `cooldown_s` **cannot go below** 15: the Python API silently raises a lower value to 15, while the CLI returns `ARG_GECERSIZ` if `--cooldown` is below 15. Larger values are allowed.
+- The rule holds **across processes**: an operating system lock is taken on the `<state>.lock` file next to the state file, and each process reserves its own time slot and sleeps outside the lock. Three processes started at the same moment queue up 15 s apart.
+- The default state file does not depend on the working directory. Precedence:
   1. `--state-file` (CLI) / `state_file=` (API)
-  2. `INSTAPULLER_STATE_FILE` ortam değişkeni
-  3. Windows: `%LOCALAPPDATA%\instapuller\rate_limit.json`; diğer sistemler: `~/.local/state/instapuller/rate_limit.json`
-- `keep_video=false` iken indirilen dosyayı silmek (`cleanup`) çağıranın sorumluluğundadır.
+  2. The `INSTAPULLER_STATE_FILE` environment variable
+  3. Windows: `%LOCALAPPDATA%\instapuller\rate_limit.json`; other systems: `~/.local/state/instapuller/rate_limit.json`
+- With `keep_video=false`, deleting the downloaded file (`cleanup`) is the caller's responsibility.
 
-## `yt-dlp` Güncelleme (Tek Satır)
+## Updating `yt-dlp` (One Line)
 
-Instagram yanıt biçimi değiştiğinde `IG_ARAC_GUNCEL_DEGIL` hatası alırsanız `yt-dlp` sürümünü şu tek komutla güncelleyebilirsiniz:
+If you get `IG_ARAC_GUNCEL_DEGIL` because Instagram changed its response format, update `yt-dlp` with this single command:
 
 ```bash
 uv add yt-dlp==$(uv pip list --outdated --format=json | python -c "import json,sys; p=[x for x in json.load(sys.stdin) if x['name']=='yt-dlp']; print(p[0]['latest_version'] if p else '2026.11.23')")
 ```
 
-Veya belirli bir sürüme sabitlemek için:
+Or pin a specific version:
 
 ```bash
-uv add yt-dlp==<YENI_SURUM>
+uv add yt-dlp==<NEW_VERSION>
 ```
 
-## CLI Kullanımı (JSON Çıktılı)
+## CLI Usage (JSON Output)
 
 ```bash
-# Varsayılan: 15 sn cooldown (--wait), video saklama kapalı (geçici dosya)
+# Default: 15 s cooldown (--wait), video not kept (temporary file)
 uv run instapuller fetch "https://www.instagram.com/reel/Chunk8-jurw/" --out-dir "./tmp" --ffprobe-bin "C:\path\to\ffprobe.exe"
 
-# Videoyu kalıcı olarak sakla
+# Keep the video permanently
 uv run instapuller fetch "https://www.instagram.com/reel/Chunk8-jurw/" --out-dir "./downloads" --keep-video
 
-# Cooldown dolmadıysa beklemeden anında IG_COOLDOWN döndür (retry_after_s ile)
+# If the cooldown has not elapsed, return IG_COOLDOWN immediately (with retry_after_s)
 uv run instapuller fetch "https://www.instagram.com/reel/Chunk8-jurw/" --no-wait
 
-# Link `-` ile başlayabiliyorsa (ör. kullanıcı girdisi) URL'den önce `--` verin
+# If the link may start with `-` (e.g. user input), put `--` before the URL
 uv run instapuller fetch --out-dir "./tmp" -- "<link>"
 
-# Transkript sonrası geçici videoyu sil
+# Delete the temporary video after transcription
 uv run instapuller cleanup "C:\path\to\video.mp4"
 ```
 
-## Python API Kullanımı
+## Python API Usage
 
 ```python
 from instapuller import fetch_video, cleanup_file
@@ -70,10 +72,10 @@ from instapuller import fetch_video, cleanup_file
 result = fetch_video(
     "https://www.instagram.com/reel/Chunk8-jurw/",
     out_dir="./tmp",
-    keep_video=False,   # Varsayılan kapalı
-    wait=True,          # Varsayılan --wait (15 sn cooldown)
-    max_duration_s=185, # varsayılan 185 sn
-    max_filesize_mb=200 # 200 MB sınırı
+    keep_video=False,   # off by default
+    wait=True,          # default --wait (15 s cooldown)
+    max_duration_s=185, # default 185 s
+    max_filesize_mb=200 # 200 MB limit
 )
 print(result.to_dict())
 
@@ -81,9 +83,9 @@ if not result.keep_video:
     cleanup_file(result.video_path)
 ```
 
-## JSON Çıktı Sözleşmesi (`autocript` Uyumlu)
+## JSON Output Contract (`autocript` Compatible)
 
-Başarılı yanıt (`exit code = 0`):
+Successful response (`exit code = 0`):
 
 ```json
 {
@@ -94,7 +96,7 @@ Başarılı yanıt (`exit code = 0`):
     "kind": "instagram",
     "url": "https://www.instagram.com/reel/Chunk8-jurw/",
     "platform_id": "Chunk8-jurw",
-    "title": "Video açıklaması...",
+    "title": "Video caption...",
     "author": "Instagram",
     "published_at": "2022-08-26T15:53:51Z",
     "duration_s": 28.4,
@@ -107,80 +109,83 @@ Başarılı yanıt (`exit code = 0`):
 }
 ```
 
-Hata yanıtı (`exit code = 1`):
+Error response (`exit code = 1`):
 
 ```json
 {
   "ok": false,
   "error": {
     "code": "IG_ERISILEMEDI",
-    "message": "Bu gönderiye erişilemedi (gizli, silinmiş ya da giriş gerekiyor olabilir). Videoyu dosya olarak yükleyin.",
+    "message": "This post could not be accessed (it may be private, deleted or require login). Upload the video as a file instead.",
     "upload_fallback": true,
     "detail": "..."
   }
 }
 ```
 
-`IG_COOLDOWN` hatası ayrıca `retry_after_s` (saniye, sayı) alanı taşır; `--no-wait` ile çağıran bu kadar sonra tekrar deneyebilir:
+The `IG_COOLDOWN` error also carries a `retry_after_s` field (seconds, number); a caller using `--no-wait` can retry after that long:
 
 ```json
 {"ok": false, "error": {"code": "IG_COOLDOWN", "message": "...", "upload_fallback": true, "retry_after_s": 10.75}}
 ```
 
-`message` son kullanıcıya gösterilebilir sade metindir; teknik ayrıntılar (araç adı, yol, ham hata) `detail` alanındadır.
+`message` is plain text that can be shown to end users; technical details (tool name, path, raw error) are in the `detail` field.
 
-## Çıkış Kodları
+## Exit Codes
 
-| Kod | Anlam |
+| Code | Meaning |
 | :---: | :--- |
-| `0` | Başarı (stdout'ta tek satır JSON, `"ok": true`) |
-| `1` | Hata (stdout'ta tek satır JSON, `"ok": false`); argüman hataları dahil |
-| `130` | Kullanıcı iptali (Ctrl+C); `BEKLENMEYEN_HATA` JSON'u yazılır |
+| `0` | Success (one line of JSON on stdout, `"ok": true`) |
+| `1` | Error (one line of JSON on stdout, `"ok": false`), including argument errors |
+| `130` | Cancelled by the user (Ctrl+C); a `BEKLENMEYEN_HATA` JSON is written |
 
-**`-h` / `--help` JSON üretmeyen tek istisnadır**: yardım metni basar ve `0` ile çıkar. Başka hiçbir durumda stdout'ta JSON dışı çıktı olmaz; geçersiz/eksik argüman, bilinmeyen seçenek ve eksik alt komut `ARG_GECERSIZ` JSON'u (çıkış `1`) döner.
+**`-h` / `--help` is the only case that does not produce JSON**: it prints help text and exits with `0`. In no other case is there non-JSON output on stdout; an invalid or missing argument, an unknown option or a missing subcommand returns an `ARG_GECERSIZ` JSON (exit `1`).
 
-> **autocript notu:** Link kullanıcıdan geldiği için `-` ile başlayabilir (ör. `-h`) ve seçenek sanılabilir. Çağırırken URL'den önce `--` geçirin: `instapuller fetch [seçenekler] -- <url>`. Böyle bir girdi `LINK_GECERSIZ` döner, yardım metni basmaz.
+> **Note for autocript:** Because the link comes from the user, it may start with `-` (e.g. `-h`) and be mistaken for an option. Pass `--` before the URL: `instapuller fetch [options] -- <url>`. Such input returns `LINK_GECERSIZ` and prints no help text.
 
-## Hata Kodları
+## Error Codes
 
-Kod listesi tek bir tabloda tutulur (`instapuller/models.py` → `ERROR_CODES`); tabloda olmayan kodla `PullError` oluşturulamaz.
+The code list lives in a single table (`instapuller/models.py` → `ERROR_CODES`); a `PullError` cannot be created with a code that is not in it.
 
-| Kod | Ne zaman | `upload_fallback` |
-| :--- | :--- | :---: |
-| `LINK_GECERSIZ` | İzin listesinde olmayan site, geçersiz/desteklenmeyen link | `true` |
-| `IG_ERISILEMEDI` | Boş medya yanıtı, gizli/silinmiş gönderi veya giriş duvarı | `true` |
-| `IG_RATE_LIMIT` | Instagram IP tabanlı geçici hız sınırı | `true` |
-| `IG_ARAC_GUNCEL_DEGIL` | Instagram yanıtı ayrıştırılamadı (`yt-dlp` güncellemesi gerekebilir; ayrıntı `detail`'de) | `true` |
-| `IG_VIDEO_DEGIL` | Çoklu gönderi (carousel) veya video içermeyen gönderi | `true` |
-| `IG_COOLDOWN` | `--no-wait` verildi ve 15 sn bekleme dolmadı (`retry_after_s` içerir) | `true` |
-| `DOSYA_BUYUK` | Video boyutu sınırı aşıyor (varsayılan 200 MB) | `true` |
-| `VIDEO_UZUN` | Video süresi sınırı aşıyor (varsayılan **185 sn**; dosya silinir) | `true` |
-| `DOSYA_BOZUK` | İndirilen dosya okunamadı veya süresi geçersiz | `true` |
-| `KAYNAK_GECICI` | Ağ/aktarım hatası ve video dosyasının oluşmadığı diğer geçici hatalar | `true` |
-| `FFPROBE_YOK` | `ffprobe` bulunamadı (kurulum eksik) | `false` |
-| `ARG_GECERSIZ` | Geçersiz/eksik komut satırı argümanı, `--cooldown` < 15 | `false` |
-| `SILME_HATASI` | `cleanup` dosyayı silemedi | `false` |
-| `BEKLENMEYEN_HATA` | Yakalanmamış istisna (`detail`: `<İstisnaTürü>: <mesaj>`), iptal, kilit alınamadı | `false` |
+| Code | English meaning | When | `upload_fallback` |
+| :--- | :--- | :--- | :---: |
+| `LINK_GECERSIZ` | Invalid link | Site not on the allowlist, or an invalid/unsupported link | `true` |
+| `IG_ERISILEMEDI` | Instagram post inaccessible | Empty media response, private/deleted post or login wall | `true` |
+| `IG_RATE_LIMIT` | Instagram rate limit | Temporary IP-based rate limit by Instagram | `true` |
+| `IG_ARAC_GUNCEL_DEGIL` | Instagram tool out of date | Instagram's response could not be parsed (`yt-dlp` may need an update; see `detail`) | `true` |
+| `IG_VIDEO_DEGIL` | Instagram post is not a video | Carousel post, or a post without video | `true` |
+| `IG_COOLDOWN` | Instagram cooldown active | `--no-wait` was given and the 15 s cooldown has not elapsed (includes `retry_after_s`) | `true` |
+| `DOSYA_BUYUK` | File too large | Video exceeds the size limit (default 200 MB) | `true` |
+| `VIDEO_UZUN` | Video too long | Video exceeds the duration limit (default **185 s**; the file is deleted) | `true` |
+| `DOSYA_BOZUK` | File corrupt | The downloaded file could not be read or its duration is invalid | `true` |
+| `KAYNAK_GECICI` | Temporary source error | Network/transfer errors and other temporary failures where no video file is produced | `true` |
+| `FFPROBE_YOK` | ffprobe missing | `ffprobe` was not found (incomplete setup) | `false` |
+| `ARG_GECERSIZ` | Invalid argument | Invalid or missing command-line argument, `--cooldown` < 15 | `false` |
+| `SILME_HATASI` | Deletion failed | `cleanup` could not delete the file | `false` |
+| `BEKLENMEYEN_HATA` | Unexpected error | Uncaught exception (`detail`: `<ExceptionType>: <message>`), cancellation, lock not acquired | `false` |
 
-## Davranış Notları
+## Behavior Notes
 
-- **Boyut sınırı indirme sırasında uygulanır** (varsayılan 200 MB): `Content-Length` bildirilse de bildirilmese de, sınır aşıldığı anda indirme kesilir ve `DOSYA_BUYUK` döner; yarım dosya silinir.
-- **Format seçimi:** `format` değeri `mp4/best`'tir; yalnızca ses ve görüntüsü **tek dosyada** olan formatlar seçilir, ffmpeg ile birleştirme yapılmaz. Yalnızca DASH (ayrı ses/görüntü) sunulan gönderiler `IG_VIDEO_DEGIL` döner.
-- **Yalnızca Instagram çıkarıcısı** yüklenir; başka bir çıkarıcıdan yanıt gelirse `IG_ARAC_GUNCEL_DEGIL` döner.
-- **Eski staging klasörleri:** her `fetch` başında hedef klasördeki 1 saatten eski `ip_*` klasörleri (öldürülmüş önceki çağrılardan kalanlar) sessizce silinir.
-- **`cleanup`** yalnızca instapuller'ın ürettiği geçici adları (`<kod>_<8 hex>.<mp4|mov|webm|mkv|m4v>`) siler; başka dosyalar için `SILME_HATASI` döner. `--keep-video` ile saklanan dosyalar bu adı taşımaz, bu komutla silinmez.
-- **Link denetimi:** kullanıcı bilgisi (`kullanici@...`), 80/443 dışı port ve yalnızca `-`/`_` içeren kodlar `LINK_GECERSIZ` döner.
+- **The size limit is enforced during the download** (default 200 MB): with or without a declared `Content-Length`, the download is aborted as soon as the limit is exceeded and `DOSYA_BUYUK` is returned; the partial file is deleted.
+- **Format selection:** the `format` value is `mp4/best`; only formats with audio and video **in a single file** are selected, and nothing is merged with ffmpeg. Posts that offer only DASH (separate audio/video) return `IG_VIDEO_DEGIL`.
+- **Only the Instagram extractor** is loaded; a response from any other extractor returns `IG_ARAC_GUNCEL_DEGIL`.
+- **Stale staging directories:** at the start of each `fetch`, `ip_*` directories older than 1 hour in the target directory (left over from killed runs) are silently removed.
+- **`cleanup`** only deletes temporary names generated by instapuller (`<code>_<8 hex>.<mp4|mov|webm|mkv|m4v>`); other files return `SILME_HATASI`. Files kept with `--keep-video` do not use this naming and are not deleted by this command.
+- **Link checks:** user info (`user@...`), ports other than 80/443 and shortcodes consisting only of `-`/`_` return `LINK_GECERSIZ`.
+- **yt-dlp warnings (diagnostics):** yt-dlp `warning`/`error` lines (at most 10 lines, each at most 200 characters, local paths masked as `[path]`) go to two places: (1) stderr, as `instapuller: yt-dlp warning: ...` (UTF-8); (2) on failure, appended to the end of `detail` as ` | yt-dlp warnings: ...` (the original error text takes priority, 500 characters total at most). On success warnings are written to stderr only; the JSON output does not change. **Warnings are never written to stdout** (a single JSON line only). stderr is for diagnostics only: `autocript` should not parse it, but should log it. `INSTAPULLER_QUIET=1` disables stderr output (appending to `detail` still happens).
 
-- **yt-dlp uyarıları (tanı):** yt-dlp'nin `warning`/`error` satırları (en fazla 10 satır, her biri en çok 200 karakter, yerel yollar `[path]` ile maskeli) şu iki yere gider: (1) stderr'e `instapuller: yt-dlp uyarısı: ...` biçiminde (UTF-8); (2) hata olursa `detail` alanının sonuna ` | yt-dlp uyarıları: ...` olarak eklenir (orijinal hata metni öncelikli, toplam 500 karakteri aşmaz). Başarıda uyarılar yalnızca stderr'e yazılır; JSON çıktısı değişmez. **stdout'a asla uyarı yazılmaz** (yalnızca tek satır JSON). stderr yalnızca tanı içindir, `autocript` onu ayrıştırmamalı ama günlüğe (log) yazmalıdır. `INSTAPULLER_QUIET=1` stderr yazımını kapatır (`detail` eklemesi sürer).
+## Adding a New Site (Extensibility)
 
-## Yeni Site Ekleme (Genişletilebilirlik)
+The allowlist (`instapuller/sites/__init__.py` → `ALLOWED_SITES`) currently contains only `instagram.com`. To add another platform (e.g. YouTube) later, add a module under `instapuller/sites/` that implements the `SiteAdapter` protocol and register it in the `ALLOWED_SITES` dictionary.
 
-Şu anda izin listesinde (`instapuller/sites/__init__.py` → `ALLOWED_SITES`) yalnızca `instagram.com` yer alır. İleride yeni bir platform (ör. YouTube) eklemek için `instapuller/sites/` altına `SiteAdapter` protokolünü uygulayan yeni bir modül ekleyip `ALLOWED_SITES` sözlüğüne kaydetmek yeterlidir.
-
-## Testler
+## Tests
 
 ```bash
 uv run pytest
 ```
 
-Video üreten testler için ffmpeg gerekir: `INSTAPULLER_TEST_FFMPEG`, `PATH` ya da `INSTAPULLER_FFPROBE_BIN` ile aynı klasördeki `ffmpeg(.exe)` aranır; bulunamazsa o testler atlanır.
+Tests that generate video need ffmpeg: it is looked up via `INSTAPULLER_TEST_FFMPEG`, then next to `INSTAPULLER_FFPROBE_BIN` (`ffmpeg(.exe)` in the same directory), then on `PATH`. If ffmpeg or ffprobe is not found, those tests are skipped.
+
+## License
+
+[MIT](LICENSE)

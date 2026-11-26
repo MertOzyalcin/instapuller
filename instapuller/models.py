@@ -1,4 +1,4 @@
-"""Veri modelleri ve autocript uyumlu sözleşme tipleri."""
+"""Data models and autocript-compatible contract types."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class SourceMeta:
         }
 
 
-# Tek doğruluk kaynağı: hata kodu -> upload_fallback.
+# Single source of truth: error code -> upload_fallback.
 ERROR_CODES: dict[str, bool] = {
     "LINK_GECERSIZ": True,
     "IG_ERISILEMEDI": True,
@@ -64,18 +64,18 @@ ERROR_CODES: dict[str, bool] = {
 }
 
 
-# IG_ARAC_GUNCEL_DEGIL için teknik açıklama (kullanıcı mesajına girmez, detail'e gider).
-TOOL_OUTDATED_DETAIL = "yt-dlp güncel olmayabilir; README'deki güncelleme adımına bakın."
+# Technical note for IG_ARAC_GUNCEL_DEGIL (goes to detail, never into the user message).
+TOOL_OUTDATED_DETAIL = "yt-dlp may be outdated; see the update step in the README."
 
 
 class SizeLimitExceeded(Exception):
-    """İndirme sırasında boyut sınırı aşıldığında progress hook'tan fırlatılan iç istisna."""
+    """Internal exception raised by the progress hook when the size limit is exceeded mid-download."""
 
 
 class PullError(Exception):
-    """autocript SourceError sözleşmesine uyumlu yapılandırılmış hata.
+    """Structured error compatible with the autocript SourceError contract.
 
-    upload_fallback değeri ERROR_CODES tablosundan okunur; tabloda olmayan kod ValueError verir.
+    upload_fallback is read from the ERROR_CODES table; a code not in the table raises ValueError.
     """
 
     def __init__(
@@ -87,7 +87,7 @@ class PullError(Exception):
         retry_after_s: float | None = None,
     ):
         if code not in ERROR_CODES:
-            raise ValueError(f"Bilinmeyen hata kodu: {code!r}")
+            raise ValueError(f"Unknown error code: {code!r}")
         text = f"{code}: {message}" + (f" | {detail}" if detail else "")
         super().__init__(text)
         self.code = code

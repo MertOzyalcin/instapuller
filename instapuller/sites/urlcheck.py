@@ -1,4 +1,4 @@
-"""Site bağdaştırıcılarının ortak URL yetki (authority) denetimi."""
+"""URL authority check shared by site adapters."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ _ALLOWED_PORTS = (None, 80, 443)
 
 
 def authority_is_clean(parts: SplitResult) -> bool:
-    """Kullanıcı bilgisi (@) ve 80/443 dışındaki port içeren linkleri reddeder."""
+    """Reject links containing user info (@) or a port other than 80/443."""
     if "@" in parts.netloc:
         return False
     try:
         port = parts.port
-    except ValueError:  # 99999 gibi geçersiz port
+    except ValueError:  # invalid port such as 99999
         return False
     return port in _ALLOWED_PORTS

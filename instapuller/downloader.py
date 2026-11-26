@@ -1,4 +1,4 @@
-"""Ana indirme akışı: URL doğrulama → cooldown → yt-dlp → boyut/süre denetimi → sözleşme."""
+"""Main download flow: URL validation → cooldown → yt-dlp → size/duration checks → contract."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from instapuller.sites import parse_url
 DEFAULT_MAX_DURATION_S = 185.0
 DEFAULT_MAX_FILESIZE_MB = 200
 STAGING_PREFIX = "ip_"
-STALE_STAGING_AGE_S = 3600.0  # bundan eski ip_* staging klasörleri silinir
+STALE_STAGING_AGE_S = 3600.0  # ip_* staging directories older than this are removed
 _PARTIAL_SUFFIXES = (".part", ".ytdl", ".temp")
 
 _SAFE_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -49,7 +49,7 @@ def _safe_slug(text: str | None) -> str:
 _ANSI_RE = re.compile(r"\[[0-9;]*[A-Za-z]")
 MAX_WARNING_LINES = 10
 MAX_WARNING_LEN = 200
-WARNINGS_LABEL = " | yt-dlp uyarıları: "
+WARNINGS_LABEL = " | yt-dlp warnings: "
 
 
 def _quiet_stderr() -> bool:
@@ -57,9 +57,9 @@ def _quiet_stderr() -> bool:
 
 
 class _SilentLogger:
-    """stdout'a hiçbir şey basmaz. warning/error satırlarını tanı için biriktirir ve stderr'e yazar.
+    """Never prints to stdout. Collects warning/error lines for diagnostics and writes them to stderr.
 
-    "max-filesize" atlama satırını ayrıca bayrakla kaydeder.
+    Also records the "max-filesize" skip line as a flag.
     """
 
     def __init__(self) -> None:
@@ -82,7 +82,7 @@ class _SilentLogger:
         try:
             if hasattr(sys.stderr, "reconfigure"):
                 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-            print(f"instapuller: yt-dlp uyarısı: {clean}", file=sys.stderr, flush=True)
+            print(f"instapuller: yt-dlp warning: {clean}", file=sys.stderr, flush=True)
         except Exception:
             pass
 
@@ -102,7 +102,7 @@ class _SilentLogger:
 
 
 def _with_warnings(err: PullError, logger: _SilentLogger, allowed_paths: list[Path]) -> PullError:
-    """Biriken yt-dlp uyarılarını detail sonuna ekler (orijinal metin öncelikli, toplam <= 500)."""
+    """Append collected yt-dlp warnings to detail (original text takes priority, total <= 500)."""
     if not logger.warnings:
         return err
     base = err.detail or ""
@@ -128,7 +128,7 @@ def _make_size_hook(max_bytes: int) -> Callable[[dict[str, Any]], None]:
 
 
 def _purge_stale_staging(target_dir: Path) -> None:
-    """Önceki (öldürülmüş) çağrılardan kalan eski ip_* staging klasörlerini sessizce siler."""
+    """Silently remove old ip_* staging directories left behind by earlier (killed) runs."""
     cutoff = time.time() - STALE_STAGING_AGE_S
     try:
         entries = list(target_dir.iterdir())
@@ -148,7 +148,7 @@ def _purge_stale_staging(target_dir: Path) -> None:
 
 
 def _find_downloaded_file(result: Any, info: Any, staging_dir: Path) -> Path | None:
-    """yt-dlp'nin bildirdiği dosya yolunu (requested_downloads) kullanır; yoksa klasörü tarar."""
+    """Use the file path reported by yt-dlp (requested_downloads); otherwise scan the directory."""
     for source in (result, info):
         if not isinstance(source, dict):
             continue
@@ -182,29 +182,29 @@ def _check_carousel_or_non_video(info: Any) -> None:
     if not isinstance(info, dict):
         raise PullError(
             "IG_ARAC_GUNCEL_DEGIL",
-            "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin.",
+            "Instagram's response could not be read. Upload the video as a file instead.",
             detail=TOOL_OUTDATED_DETAIL,
         )
 
     if info.get("_type") == "playlist" or isinstance(info.get("entries"), list):
         raise PullError(
             "IG_VIDEO_DEGIL",
-            "Çoklu gönderiler (carousel) desteklenmiyor; yalnızca tekil video veya Reel linki girin. "
-            "Videoyu dosya olarak yükleyin.",
+            "Carousel posts are not supported; enter a single video or Reel link. "
+            "Upload the video as a file instead.",
         )
 
     if info.get("extractor_key") != "Instagram":
         raise PullError(
             "IG_ARAC_GUNCEL_DEGIL",
-            "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin.",
-            detail=f"{TOOL_OUTDATED_DETAIL} Beklenmeyen çıkarıcı: {str(info.get('extractor_key'))[:40]}",
+            "Instagram's response could not be read. Upload the video as a file instead.",
+            detail=f"{TOOL_OUTDATED_DETAIL} Unexpected extractor: {str(info.get('extractor_key'))[:40]}",
         )
 
     vcodec = info.get("vcodec")
     if vcodec == "none" and not info.get("formats"):
         raise PullError(
             "IG_VIDEO_DEGIL",
-            "Bu gönderide indirilebilir video bulunamadı. Videoyu dosya olarak yükleyin.",
+            "No downloadable video was found in this post. Upload the video as a file instead.",
         )
 
 
@@ -231,18 +231,18 @@ def fetch_video(
     duration_prober: Callable[..., float] = probe_duration,
     limiter: CooldownLimiter | None = None,
 ) -> PullResult:
-    """İzinli siteden tekil videoyu anonim olarak indirir ve autocript uyumlu sonuç döner."""
-    # 1. URL doğrulama ve site izin listesi kontrolü (ağ isteğinden ve cooldown'dan önce)
+    """Anonymously download a single video from an allowed site and return an autocript-compatible result."""
+    # 1. URL validation and site allowlist check (before any network request or cooldown)
     adapter, parsed = parse_url(url)
 
-    # 2. Ardışık istek koruması (cooldown)
+    # 2. Back-to-back request protection (cooldown)
     active_limiter = limiter or CooldownLimiter(
         Path(state_file) if state_file is not None else default_state_file(),
         cooldown_s=max(float(cooldown_s), MIN_COOLDOWN_S),
     )
     active_limiter.acquire(wait=wait)
 
-    # 3. Hedef klasör belirleme (saklama varsayılan olarak kapalı)
+    # 3. Choose the target directory (keeping the video is off by default)
     if out_dir is not None:
         target_dir = Path(out_dir)
     elif keep_video:
@@ -255,14 +255,14 @@ def fetch_video(
     allowed_paths = [target_dir]
     max_bytes = max(1, int(max_filesize_mb)) * 1024 * 1024
 
-    # 4. Geçici çalışma klasörü içinde indirme (hata olursa temiz bırakır)
+    # 4. Download inside a temporary working directory (left clean on failure)
     staging_dir = Path(tempfile.mkdtemp(prefix=f"{STAGING_PREFIX}{parsed.platform_id}_", dir=target_dir))
     final_path: Path | None = None
 
     try:
         logger = _SilentLogger()
         ydl_opts: dict[str, Any] = {
-            # Klasör outtmpl'e girmez (klasör adındaki % karakterleri şablon sayılmasın)
+            # The directory stays out of outtmpl (so % in its name is not read as a template)
             "paths": {"home": str(staging_dir), "temp": str(staging_dir)},
             "outtmpl": f"{parsed.platform_id}.%(ext)s",
             "allowed_extractors": ["Instagram"],
@@ -285,7 +285,7 @@ def fetch_video(
                 if _exceeds_precheck_filesize(info, max_bytes):
                     raise PullError(
                         "DOSYA_BUYUK",
-                        f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
+                        f"The video exceeds the {max_filesize_mb} MB limit. Upload the video as a file instead.",
                     )
                 result = ydl.process_ie_result(info, download=True)
         except Exception as exc:
@@ -295,38 +295,38 @@ def fetch_video(
 
         staged_file = _find_downloaded_file(result, info, staging_dir)
         if staged_file is None:
-            # yt-dlp max_filesize aşıldığında istisna fırlatmadan dosyayı atlayabilir
+            # yt-dlp may skip the file without raising when max_filesize is exceeded
             if logger.size_exceeded or _exceeds_precheck_filesize(info, max_bytes):
                 raise _with_warnings(
                     PullError(
                         "DOSYA_BUYUK",
-                        f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
+                        f"The video exceeds the {max_filesize_mb} MB limit. Upload the video as a file instead.",
                     ),
                     logger,
                     allowed_paths,
                 )
             raise _with_warnings(PullError(
                 "KAYNAK_GECICI",
-                "Video şu anda indirilemedi. Biraz sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
-                detail="İndirme tamamlandı ama klasörde video dosyası oluşmadı (boyut sınırına takılmış veya boş yanıt olabilir).",
+                "The video could not be downloaded right now. Try again shortly or upload the video as a file.",
+                detail="Download finished but no video file was created (size limit hit or empty response).",
             ), logger, allowed_paths)
 
         if staged_file.stat().st_size > max_bytes:
             raise PullError(
                 "DOSYA_BUYUK",
-                f"Video {max_filesize_mb} MB sınırını aşıyor. Videoyu dosya olarak yükleyin.",
+                f"The video exceeds the {max_filesize_mb} MB limit. Upload the video as a file instead.",
             )
 
-        # 5. İndirme sonrası ffprobe ile kesin süre ölçümü
+        # 5. Measure the exact duration with ffprobe after downloading
         duration_s = duration_prober(staged_file, ffprobe_bin=ffprobe_bin)
         if duration_s > max_duration_s:
             raise PullError(
                 "VIDEO_UZUN",
-                f"Video {_fmt_seconds(max_duration_s)} saniyeyi aşıyor ({round(duration_s, 1)} sn). "
-                "Videoyu kısaltıp dosya olarak yükleyin.",
+                f"The video is longer than {_fmt_seconds(max_duration_s)} seconds ({round(duration_s, 1)} s). "
+                "Shorten it and upload it as a file.",
             )
 
-        # 6. Dosyayı hedef klasöre taşı
+        # 6. Move the file to the target directory
         ext = staged_file.suffix or ".mp4"
         author_slug = _safe_slug(info.get("channel") or info.get("uploader"))
         if keep_video:

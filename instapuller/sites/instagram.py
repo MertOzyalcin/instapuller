@@ -1,4 +1,4 @@
-"""Instagram link ayrıştırıcı, metadata eşleyici ve hata sınıflandırıcı."""
+"""Instagram link parser, metadata mapper and error classifier."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ _FS_ERRORS = (PermissionError, FileNotFoundError, IsADirectoryError, NotADirecto
 
 
 def _strip_prefixes(msg: str) -> str:
-    """"ERROR: " ve "[Instagram] <id>: " öneklerini (yt-dlp'nin eklediği) atar."""
+    """Strip the "ERROR: " and "[Instagram] <id>: " prefixes added by yt-dlp."""
     prev = None
     while prev != msg:
         prev = msg
@@ -89,7 +89,7 @@ def _strip_prefixes(msg: str) -> str:
 
 
 def _exception_chain(exc: BaseException) -> list[BaseException]:
-    """DownloadError.exc_info, ExtractorError.cause/exc_info, __cause__ ve __context__ zincirini gezer."""
+    """Walk the DownloadError.exc_info, ExtractorError.cause/exc_info, __cause__ and __context__ chain."""
     seen: list[BaseException] = []
     stack: list[object] = [exc]
     while stack and len(seen) < 20:
@@ -148,9 +148,9 @@ def _iso_utc(ts: Any) -> str | None:
 
 
 def _outdated_detail(raw_msg: str, allowed_paths: Iterable[str | Path]) -> str:
-    budget = MAX_DETAIL_LEN - len(TOOL_OUTDATED_DETAIL) - len(" Orijinal hata: ")
+    budget = MAX_DETAIL_LEN - len(TOOL_OUTDATED_DETAIL) - len(" Original error: ")
     original = sanitize_detail(raw_msg, max_len=max(budget, 0), allowed_paths=allowed_paths)
-    return f"{TOOL_OUTDATED_DETAIL} Orijinal hata: {original}" if original else TOOL_OUTDATED_DETAIL
+    return f"{TOOL_OUTDATED_DETAIL} Original error: {original}" if original else TOOL_OUTDATED_DETAIL
 
 
 class InstagramAdapter:
@@ -162,7 +162,7 @@ class InstagramAdapter:
         if not raw:
             raise PullError(
                 "LINK_GECERSIZ",
-                "Geçersiz Instagram linki. Bir Reel veya tekil video linki girin ya da videoyu dosya olarak yükleyin.",
+                "Invalid Instagram link. Enter a Reel or single video link, or upload the video as a file.",
             )
         if "://" not in raw:
             raw = "https://" + raw
@@ -171,7 +171,7 @@ class InstagramAdapter:
         except ValueError:
             raise PullError(
                 "LINK_GECERSIZ",
-                "Geçersiz Instagram linki. Bir Reel veya tekil video linki girin ya da videoyu dosya olarak yükleyin.",
+                "Invalid Instagram link. Enter a Reel or single video link, or upload the video as a file.",
             ) from None
 
         if (
@@ -181,11 +181,11 @@ class InstagramAdapter:
         ):
             raise PullError(
                 "LINK_GECERSIZ",
-                "Geçersiz Instagram linki. Bir Reel veya tekil video linki girin ya da videoyu dosya olarak yükleyin.",
+                "Invalid Instagram link. Enter a Reel or single video link, or upload the video as a file.",
             )
 
         segs = [s for s in parts.path.split("/") if s]
-        # /<kullanici>/reel/<kod> veya /<kullanici>/reels/<kod>
+        # /<username>/reel/<code> or /<username>/reels/<code>
         if len(segs) == 3 and segs[1] in ("reel", "reels"):
             segs = segs[1:]
 
@@ -215,7 +215,7 @@ class InstagramAdapter:
 
         raise PullError(
             "LINK_GECERSIZ",
-            "Bu Instagram linki desteklenmiyor. Tekil bir Reel veya video linki girin ya da videoyu dosya olarak yükleyin.",
+            "This Instagram link is not supported. Enter a single Reel or video link, or upload the video as a file.",
         )
 
     def map_error(
@@ -233,60 +233,60 @@ class InstagramAdapter:
         detail = sanitize_detail(raw_msg, allowed_paths=allowed_paths)
         text = _strip_prefixes(raw_msg).lower()
 
-        # 1. İndirme sırasında boyut sınırı aşıldı (iç istisna) ya da yt-dlp'nin kendi mesajı
+        # 1. Size limit exceeded mid-download (internal exception) or yt-dlp's own message
         if any(isinstance(e, SizeLimitExceeded) for e in chain) or any(
             k in text for k in _SIZE_KEYS
         ):
             return PullError(
                 "DOSYA_BUYUK",
-                "Video izin verilen dosya boyutu sınırını aşıyor. Videoyu dosya olarak yükleyin.",
+                "The video exceeds the allowed file size. Upload the video as a file instead.",
                 detail=detail,
             )
 
-        # 2. HTTP durumu: önce istisna türünden, yoksa yalnızca "HTTP Error NNN" kalıbından
+        # 2. HTTP status: from the exception type first, else only from the "HTTP Error NNN" pattern
         status = _http_status(chain, raw_msg)
         if status == 429:
             return self._rate_limit(detail)
         if status in (401, 403, 404):
             return self._inaccessible(detail)
         if status is not None:
-            return self._transient(detail)  # 5xx ve diğer HTTP hataları
+            return self._transient(detail)  # 5xx and other HTTP errors
 
-        # 3. Metne dayalı yt-dlp mesajları (önekler atılmış halde)
+        # 3. Text-based yt-dlp messages (with prefixes stripped)
         if any(k in text for k in _RATE_LIMIT_KEYS):
             return self._rate_limit(detail)
         if any(k in text for k in _NO_VIDEO_KEYS):
             return PullError(
                 "IG_VIDEO_DEGIL",
-                "Bu gönderide indirilebilir tekil bir video bulunamadı. Videoyu dosya olarak yükleyin.",
+                "No downloadable single video was found in this post. Upload the video as a file instead.",
                 detail=detail,
             )
         if any(k in text for k in _INACCESSIBLE_KEYS):
             return self._inaccessible(detail)
 
-        # 4. Ağ / DNS / zaman aşımı: tür ya da yt-dlp'nin ağ mesajı kalıpları
+        # 4. Network / DNS / timeout: exception type or yt-dlp network message patterns
         if any(_is_network_exc(e) for e in chain) or any(k in text for k in _NETWORK_KEYS):
             return self._transient(detail)
 
-        # 5. Ayrıştırma / yt-dlp sürüm uyumsuzluğu
+        # 5. Parsing failure / yt-dlp version mismatch
         if isinstance(exc, (KeyError, TypeError, ValueError)) or any(
             k in text for k in _PARSE_KEYS
         ):
             return PullError(
                 "IG_ARAC_GUNCEL_DEGIL",
-                "Instagram'dan gelen yanıt okunamadı. Videoyu dosya olarak yükleyin.",
+                "Instagram's response could not be read. Upload the video as a file instead.",
                 detail=_outdated_detail(raw_msg, allowed_paths),
             )
 
-        # 6. Diğer geçici hatalar
+        # 6. Other temporary errors
         return self._transient(detail)
 
     @staticmethod
     def _rate_limit(detail: str | None) -> PullError:
         return PullError(
             "IG_RATE_LIMIT",
-            "Instagram bu IP adresinden gelen istekleri geçici olarak kısıtladı. "
-            "Bir süre sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
+            "Instagram has temporarily limited requests from this IP address. "
+            "Try again later or upload the video as a file.",
             detail=detail,
         )
 
@@ -294,8 +294,8 @@ class InstagramAdapter:
     def _inaccessible(detail: str | None) -> PullError:
         return PullError(
             "IG_ERISILEMEDI",
-            "Bu gönderiye erişilemedi (gizli, silinmiş ya da giriş gerekiyor olabilir). "
-            "Videoyu dosya olarak yükleyin.",
+            "This post could not be accessed (it may be private, deleted or require login). "
+            "Upload the video as a file instead.",
             detail=detail,
         )
 
@@ -303,7 +303,7 @@ class InstagramAdapter:
     def _transient(detail: str | None) -> PullError:
         return PullError(
             "KAYNAK_GECICI",
-            "Video şu anda indirilemedi. Biraz sonra tekrar deneyin veya videoyu dosya olarak yükleyin.",
+            "The video could not be downloaded right now. Try again shortly or upload the video as a file.",
             detail=detail,
         )
 

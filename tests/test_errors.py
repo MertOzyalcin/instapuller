@@ -1,4 +1,4 @@
-"""Hata eşleme ve detail temizleme (yerel yol gizleme, <= 500 karakter) testleri."""
+"""Error mapping and detail sanitizing tests (local path hiding, <= 500 characters)."""
 
 from instapuller.sanitize import MAX_DETAIL_LEN, sanitize_detail
 from instapuller.sites.instagram import InstagramAdapter
@@ -14,8 +14,8 @@ def test_empty_media_maps_to_ig_erisilemedi():
     assert err.code == "IG_ERISILEMEDI"
     assert (
         err.message
-        == "Bu gönderiye erişilemedi (gizli, silinmiş ya da giriş gerekiyor olabilir). "
-        "Videoyu dosya olarak yükleyin."
+        == "This post could not be accessed (it may be private, deleted or require login). "
+        "Upload the video as a file instead."
     )
     assert err.upload_fallback is True
 

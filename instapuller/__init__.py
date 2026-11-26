@@ -1,4 +1,4 @@
-"""instapuller: autocript uyumlu anonim video indirme ve metrik aracı."""
+"""instapuller: anonymous, autocript-compatible video download and metrics tool."""
 
 from instapuller.cleanup import cleanup_file
 from instapuller.downloader import (

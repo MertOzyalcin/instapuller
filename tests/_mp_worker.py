@@ -1,4 +1,4 @@
-"""test_rate_limit_multiprocess için alt süreç çalışanı (test dosyası değil)."""
+"""Subprocess worker for test_rate_limit_multiprocess (not a test file)."""
 
 import json
 import sys

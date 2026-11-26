@@ -1,4 +1,4 @@
-"""Disk tabanlı cooldown (bekleme ve --no-wait) birim testleri."""
+"""Unit tests for the disk-based cooldown (waiting and --no-wait)."""
 
 import pytest
 
@@ -36,7 +36,7 @@ def test_second_request_waits_remaining_when_wait_true(tmp_path):
     limiter = CooldownLimiter(state, cooldown_s=15.0, clock=clock, sleeper=clock.sleep)
 
     limiter.acquire(wait=True)
-    clock.now += 5.0  # 5 sn geçti, 10 sn kalmalı
+    clock.now += 5.0  # 5 s elapsed, 10 s should remain
 
     waited = limiter.acquire(wait=True)
     assert waited == 10.0
@@ -49,7 +49,7 @@ def test_second_request_raises_ig_cooldown_when_no_wait(tmp_path):
     limiter = CooldownLimiter(state, cooldown_s=15.0, clock=clock, sleeper=clock.sleep)
 
     limiter.acquire(wait=True)
-    clock.now += 4.25  # 10.75 sn kalmalı
+    clock.now += 4.25  # 10.75 s should remain
 
     with pytest.raises(PullError) as exc_info:
         limiter.acquire(wait=False)

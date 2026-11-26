@@ -1,6 +1,6 @@
-"""CLI'ı sahte yt-dlp ile alt süreçte çalıştırır (test dosyası değil).
+"""Run the CLI in a subprocess with a fake yt-dlp (not a test file).
 
-Kullanım: python tests/_cli_fake_run.py fetch <url> --out-dir <klasör> ...
+Usage: python tests/_cli_fake_run.py fetch <url> --out-dir <dir> ...
 """
 
 import os

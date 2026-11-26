@@ -1,4 +1,4 @@
-"""Disk tabanlı, süreçler arası güvenli cooldown (ardışık istek koruması)."""
+"""Disk-based, cross-process safe cooldown (protection against back-to-back requests)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from instapuller.models import PullError
 
 DEFAULT_COOLDOWN_S = 15.0
 MIN_COOLDOWN_S = 15.0
-MAX_QUEUE_SLOTS = 20  # güvenilir kuyrukta bir yuva en fazla bu kadar cooldown ilerde olabilir
+MAX_QUEUE_SLOTS = 20  # in a trusted queue a slot may be at most this many cooldowns ahead
 LOCK_TIMEOUT_S = 10.0
 _LOCK_POLL_S = 0.05
 _REPLACE_ATTEMPTS = 20
@@ -24,7 +24,7 @@ _REPLACE_POLL_S = 0.05
 
 
 def default_state_file() -> Path:
-    """Çalışma klasöründen bağımsız, kullanıcıya özgü varsayılan state dosyası yolu."""
+    """Default per-user state file path, independent of the working directory."""
     env = os.environ.get("INSTAPULLER_STATE_FILE")
     if env:
         return Path(env)
@@ -70,7 +70,7 @@ def _unlock(fd: int) -> None:
 
 
 class CooldownLimiter:
-    """Farklı süreçler arasında bile istekleri en az `cooldown_s` arayla sıraya dizer."""
+    """Space requests at least `cooldown_s` apart, even across separate processes."""
 
     def __init__(
         self,
@@ -81,7 +81,7 @@ class CooldownLimiter:
         sleeper: Callable[[float], None] = time.sleep,
     ):
         self.state_file = Path(state_file)
-        # Güvenlik: 15 sn altına inilemez (sessizce yükseltilir).
+        # Safety: cannot go below 15 s (silently raised).
         self.cooldown_s = max(MIN_COOLDOWN_S, float(cooldown_s))
         self._clock = clock
         self._sleeper = sleeper
@@ -98,7 +98,7 @@ class CooldownLimiter:
         except OSError as exc:
             raise PullError(
                 "BEKLENMEYEN_HATA",
-                "Bekleme kaydı açılamadı. Birazdan tekrar deneyin.",
+                "The cooldown record could not be opened. Try again shortly.",
                 detail=f"{type(exc).__name__}: {exc}"[:300],
             ) from None
         try:
@@ -107,8 +107,8 @@ class CooldownLimiter:
                 if time.monotonic() >= deadline:
                     raise PullError(
                         "BEKLENMEYEN_HATA",
-                        "Bekleme kaydı başka bir işlem tarafından kullanılıyor. Birazdan tekrar deneyin.",
-                        detail=f"Kilit {LOCK_TIMEOUT_S:g} sn içinde alınamadı.",
+                        "The cooldown record is in use by another process. Try again shortly.",
+                        detail=f"Could not acquire the lock within {LOCK_TIMEOUT_S:g} s.",
                     )
                 time.sleep(_LOCK_POLL_S)
             try:
@@ -125,7 +125,7 @@ class CooldownLimiter:
         return None
 
     def _read_state(self) -> tuple[float | None, float | None]:
-        """(last_request_at, written_at) döner; okunamayanlar None."""
+        """Return (last_request_at, written_at); unreadable values are None."""
         try:
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
             return self._num(data.get("last_request_at")), self._num(data.get("written_at"))
@@ -152,12 +152,13 @@ class CooldownLimiter:
             tmp.unlink(missing_ok=True)
 
     def acquire(self, *, wait: bool = True) -> float:
-        """Bir istek yuvası ayırır.
+        """Reserve a request slot.
 
-        - Kilit altında: slot = max(now, last + cooldown), en fazla now + cooldown.
-        - wait=False ve slot > now: hiçbir şey yazmadan IG_COOLDOWN (retry_after_s ile).
-        - Aksi halde slot kaydedilir, kilit bırakılır ve slot anına kadar kilit dışında uyunur.
-        Beklenen süreyi (saniye) döner.
+        - Under the lock: slot = max(now, last + cooldown), capped at now + cooldown, or at
+          now + MAX_QUEUE_SLOTS * cooldown when the stored state is trusted.
+        - wait=False and slot > now: raise IG_COOLDOWN (with retry_after_s), writing nothing.
+        - Otherwise save the slot, release the lock and sleep until the slot outside the lock.
+        Return the time waited, in seconds.
         """
         with self._exclusive_lock():
             now = self._clock()
@@ -165,9 +166,9 @@ class CooldownLimiter:
             slot = now
             if last_ts is not None:
                 slot = max(now, last_ts + self.cooldown_s)
-                # S2: state'in zamanı güvenilir değilse (yazma anı yok ya da şimdiden ilerde = saat
-                # geri alınmış) uzun uyku olmasın. Güvenilir kuyrukta (paralel süreçler) yuvalar
-                # 15 sn arayla ilerler, bu yüzden yalnızca makul bir kuyruk derinliğiyle sınırlanır.
+                # Avoid long sleeps when the stored time is untrustworthy (no write time, or one
+                # in the future = the clock was set back). In a trusted queue (parallel processes)
+                # slots advance 15 s apart, so only a reasonable queue depth limits them.
                 trusted = written_at is not None and written_at <= now + 1.0
                 horizon = now + self.cooldown_s * (MAX_QUEUE_SLOTS if trusted else 1)
                 slot = min(slot, horizon)
@@ -176,8 +177,8 @@ class CooldownLimiter:
             if not wait and delay > 0:
                 raise PullError(
                     "IG_COOLDOWN",
-                    f"Çok sık istek gönderildi. {math.ceil(delay)} saniye sonra tekrar deneyin "
-                    "veya videoyu dosya olarak yükleyin.",
+                    f"Too many requests. Try again in {math.ceil(delay)} seconds "
+                    "or upload the video as a file.",
                     retry_after_s=round(delay, 2),
                 )
             self._write_state(slot, now)

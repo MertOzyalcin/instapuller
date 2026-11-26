@@ -1,4 +1,4 @@
-"""CLI: her durumda tek satır JSON, çıkış kodları ve hata kodu tablosu."""
+"""CLI: a single JSON line in every case, exit codes and the error code table."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def test_missing_subcommand_is_json_arg_error():
 
 
 def test_unknown_option_is_json_arg_error():
-    rc, payload = _run("fetch", GOOD_URL, "--yok-boyle-secenek")
+    rc, payload = _run("fetch", GOOD_URL, "--no-such-option")
     assert rc == 1
     _assert_error(payload, "ARG_GECERSIZ")
 
@@ -86,7 +86,7 @@ def test_help_exits_zero_with_text_not_json():
 
 
 def test_cleanup_failure_is_silme_hatasi_not_fallback(tmp_path):
-    rc, payload = _run("cleanup", str(tmp_path))  # klasör -> hata
+    rc, payload = _run("cleanup", str(tmp_path))  # directory -> error
     assert rc == 1
     _assert_error(payload, "SILME_HATASI")
     assert payload["error"]["upload_fallback"] is False
@@ -101,12 +101,12 @@ def test_keyboard_interrupt_gives_json_and_130(monkeypatch, capsys):
     assert rc == 130
     payload = json.loads(capsys.readouterr().out)
     _assert_error(payload, "BEKLENMEYEN_HATA")
-    assert payload["error"]["message"] == "İşlem iptal edildi."
+    assert payload["error"]["message"] == "The operation was cancelled."
 
 
 def test_unexpected_exception_is_beklenmeyen_hata_without_fallback(monkeypatch, capsys):
     def boom(*a, **k):
-        raise RuntimeError(r"kaput C:\Users\gizli\x.txt")
+        raise RuntimeError(r"broken C:\Users\secretuser\x.txt")
 
     monkeypatch.setattr(cli, "fetch_video", boom)
     rc = cli.main(["fetch", GOOD_URL])
@@ -114,8 +114,8 @@ def test_unexpected_exception_is_beklenmeyen_hata_without_fallback(monkeypatch, 
     payload = json.loads(capsys.readouterr().out)
     _assert_error(payload, "BEKLENMEYEN_HATA")
     assert payload["error"]["upload_fallback"] is False
-    assert payload["error"]["detail"].startswith("RuntimeError: kaput")
-    assert "gizli" not in payload["error"]["detail"]
+    assert payload["error"]["detail"].startswith("RuntimeError: broken")
+    assert "secretuser" not in payload["error"]["detail"]
 
 
 def test_cooldown_below_min_in_process(capsys):
@@ -123,7 +123,7 @@ def test_cooldown_below_min_in_process(capsys):
     _assert_error(json.loads(capsys.readouterr().out), "ARG_GECERSIZ")
 
 
-# --- hata kodu tablosu ---------------------------------------------------------
+# --- error code table ---------------------------------------------------------
 
 _TRUE_CODES = [
     "LINK_GECERSIZ",
@@ -152,14 +152,14 @@ def test_every_pullerror_code_in_source_is_in_table_and_old_code_is_gone():
         src = py.read_text(encoding="utf-8")
         assert "IG_INDIRME_HATASI" not in src, py
         used.update(re.findall(r'PullError\(\s*"([A-Z0-9_]+)"', src))
-    assert used, "tarama hiçbir kod bulamadı"
+    assert used, "the scan found no codes"
     assert used <= set(ERROR_CODES), used - set(ERROR_CODES)
     assert "IG_INDIRME_HATASI" not in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 def test_unknown_code_raises_value_error_and_fallback_param_is_gone():
     with pytest.raises(ValueError):
-        PullError("YAZIM_HATASI", "x")
+        PullError("TYPO_CODE", "x")
     with pytest.raises(TypeError):
         PullError("LINK_GECERSIZ", "x", upload_fallback=False)  # type: ignore[call-arg]
     assert PullError("FFPROBE_YOK", "x").upload_fallback is False

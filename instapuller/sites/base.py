@@ -1,4 +1,4 @@
-"""Site bağdaştırıcı sözleşmesi: yeni platformlar (örn. YouTube) bu arayüzle eklenir."""
+"""Site adapter contract: new platforms (e.g. YouTube) are added through this interface."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class SiteAdapter(Protocol):
     hosts: frozenset[str]
 
     def parse_url(self, url: str) -> ParsedLink:
-        """Siteye ait URL'yi doğrular ve kanonikleştirir; geçersizse PullError('LINK_GECERSIZ')."""
+        """Validate and canonicalize a site URL; raise PullError('LINK_GECERSIZ') if invalid."""
         ...
 
     def map_error(
@@ -23,7 +23,7 @@ class SiteAdapter(Protocol):
         *,
         allowed_paths: Iterable[str | Path] = (),
     ) -> PullError:
-        """Altyapı/yt-dlp hatasını kullanıcı dostu, temizlenmiş PullError'a eşler."""
+        """Map an infrastructure/yt-dlp error to a user-friendly, sanitized PullError."""
         ...
 
     def extract_meta(
@@ -33,5 +33,5 @@ class SiteAdapter(Protocol):
         *,
         duration_s: float | None,
     ) -> SourceMeta:
-        """yt-dlp bilgi sözlüğünü autocript uyumlu SourceMeta'ya dönüştürür."""
+        """Convert a yt-dlp info dictionary into an autocript-compatible SourceMeta."""
         ...

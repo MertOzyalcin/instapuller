@@ -1,4 +1,4 @@
-"""Sözleşme biçimi, carousel reddi, süre/boyut denetimi ve CLI JSON testleri (mock ağ)."""
+"""Contract shape, carousel rejection, duration/size checks and CLI JSON tests (mocked network)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from instapuller.models import PullError
 
 
 class NoWaitLimiter:
-    """Hiç beklemeyen sahte limiter (üretim kodunda cooldown kapatılamaz)."""
+    """Fake limiter that never waits (the cooldown cannot be disabled in production code)."""
 
     def acquire(self, *, wait: bool = True) -> float:
         return 0.0
@@ -50,7 +50,7 @@ def _sample_info() -> dict[str, Any]:
         "uploader": "Instagram",
         "channel": "instagram",
         "title": "Video by instagram",
-        "description": "Kısa test açıklaması",
+        "description": "Short test caption",
         "timestamp": 1661529231,
         "view_count": None,
         "like_count": 972107,
@@ -74,7 +74,7 @@ def test_fetch_video_contract_matches_autocript(tmp_path):
 
     payload = res.to_dict()
     assert payload["ok"] is True
-    assert payload["keep_video"] is False  # Varsayılan kapalı
+    assert payload["keep_video"] is False  # Off by default
     assert Path(payload["video_path"]).is_file()
 
     meta = payload["meta"]
@@ -92,13 +92,13 @@ def test_fetch_video_contract_matches_autocript(tmp_path):
     assert meta["platform_id"] == "Chunk8-jurw"
     assert meta["url"] == "https://www.instagram.com/reel/Chunk8-jurw/"
     assert meta["author"] == "instagram"
-    assert meta["title"] == "Kısa test açıklaması"
+    assert meta["title"] == "Short test caption"
     assert meta["published_at"] == "2022-08-26T15:53:51Z"
     assert meta["duration_s"] == 42.35
     assert set(meta["stats"].keys()) == {"views", "likes", "comments"}
     assert meta["stats"] == {"views": None, "likes": 972107, "comments": 15704}
 
-    # cleanup_file dosyayı silmeli
+    # cleanup_file must delete the file
     assert cleanup_file(res.video_path) is True
     assert not res.video_path.exists()
     assert cleanup_file(res.video_path) is False
@@ -136,7 +136,7 @@ def test_video_over_180s_rejected_and_file_deleted(tmp_path):
         )
     assert exc_info.value.code == "VIDEO_UZUN"
     assert exc_info.value.upload_fallback is True
-    # İndirilen dosya silinmiş olmalı
+    # The downloaded file must be gone
     assert list(out_dir.glob("*")) == []
 
 
@@ -148,7 +148,7 @@ def test_file_exceeding_max_size_rejected_and_deleted(tmp_path):
             out_dir=out_dir,
             state_file=tmp_path / "state.json",
             limiter=NoWaitLimiter(),
-            max_filesize_mb=1,  # 1 MB sınır
+            max_filesize_mb=1,  # 1 MB limit
             ydl_factory=lambda opts: FakeYDL(opts, _sample_info(), write_bytes=2 * 1024 * 1024),
             duration_prober=lambda path, ffprobe_bin=None: 10.0,
         )
