@@ -213,6 +213,7 @@ def fetch_video(
     active_limiter = limiter or CooldownLimiter(
         Path(state_file) if state_file is not None else default_state_file(),
         cooldown_s=max(float(cooldown_s), MIN_COOLDOWN_S),
+        site=adapter.site_id,
     )
     active_limiter.acquire(wait=wait)
 

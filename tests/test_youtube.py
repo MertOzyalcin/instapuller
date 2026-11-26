@@ -439,3 +439,56 @@ def test_cli_passes_js_runtime_bin(monkeypatch, capsys, tmp_path):
     out = json.loads(capsys.readouterr().out)
     assert out["error"]["code"] == "JS_ORTAMI_YOK"
     assert out["error"]["upload_fallback"] is True
+
+
+# --- per-site cooldown through fetch_video (real CooldownLimiter, shared state file) ---------------------
+
+
+def _ig_info() -> dict[str, Any]:
+    return {"id": "Chunk8-jurw", "extractor_key": "Instagram", "ext": "mp4", "duration": 10}
+
+
+def test_fetch_video_uses_separate_cooldown_per_site(tmp_path, qjs):
+    state = tmp_path / "state.json"
+    common = dict(
+        out_dir=tmp_path / "out",
+        state_file=state,
+        wait=False,
+        duration_prober=lambda path, ffprobe_bin=None: 10.0,
+    )
+    ig_url = "https://www.instagram.com/reel/Chunk8-jurw/"
+
+    fetch_video(ig_url, ydl_factory=lambda o: FakeYDL(o, _ig_info(), ext="mp4"), **common)
+    # YouTube right after Instagram: no IG_COOLDOWN, the Instagram slot does not block it.
+    fetch_video(CANON, js_runtime_bin=qjs, ydl_factory=lambda o: FakeYDL(o, yt_info()), **common)
+
+    data = json.loads(state.read_text(encoding="utf-8"))
+    assert set(data) == {"last_request_at", "written_at", "youtube"}
+    ig_slot = data["last_request_at"]
+
+    # Second request of each site inside 15 s is still refused, and refusals write nothing.
+    with pytest.raises(PullError) as ig:
+        fetch_video(ig_url, ydl_factory=lambda o: FakeYDL(o, _ig_info(), ext="mp4"), **common)
+    assert ig.value.code == "IG_COOLDOWN" and ig.value.retry_after_s > 14
+    with pytest.raises(PullError) as yt:
+        fetch_video(CANON, js_runtime_bin=qjs, ydl_factory=lambda o: FakeYDL(o, yt_info()), **common)
+    assert yt.value.code == "IG_COOLDOWN"
+    assert json.loads(state.read_text(encoding="utf-8"))["last_request_at"] == ig_slot
+
+
+def test_fetch_video_youtube_only_state_file(tmp_path, qjs):
+    """autocript passes a separate state file per site; a youtube-only file must work."""
+    state = tmp_path / "instapuller-youtube.json"
+    common = dict(
+        out_dir=tmp_path / "out",
+        state_file=state,
+        wait=False,
+        js_runtime_bin=qjs,
+        duration_prober=lambda path, ffprobe_bin=None: 10.0,
+    )
+    fetch_video(CANON, ydl_factory=lambda o: FakeYDL(o, yt_info()), **common)
+    data = json.loads(state.read_text(encoding="utf-8"))
+    assert set(data) == {"youtube"}
+    with pytest.raises(PullError) as yt:
+        fetch_video(CANON, ydl_factory=lambda o: FakeYDL(o, yt_info()), **common)
+    assert yt.value.code == "IG_COOLDOWN"
