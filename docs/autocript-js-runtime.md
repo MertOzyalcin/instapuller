@@ -115,6 +115,19 @@ If the runtime is missing or unusable, instapuller returns `JS_ORTAMI_YOK` (`upl
 
 ## Decision
 
-Runtime choice and measurements are recorded after the live trial (pending).
+**Use quickjs-ng v0.18.0** (`tools\js\qjs.exe`). Deno is a documented alternative only.
+
+Rule set before the trial: choose quickjs-ng if it succeeds on 5/5 links and its median time is at most deno's median + 10 s.
+
+Live trial, 2026-11-26, instapuller 0.3.0, yt-dlp 2026.11.23, yt-dlp-ejs 0.8.0, Windows 11 x64. Five YouTube Shorts links (17–64 s), audio only, at least 15.5 s between requests; one request = one `fetch_video` call; every file was deleted afterwards.
+
+| Runtime | Success | Median time per fetch | Slowest fetch | Disk |
+|---|---|---|---|---|
+| quickjs-ng 0.18.0 | 5/5 | 7.6 s | 8.7 s | 1.8 MB (`qjs.exe`) |
+| deno 2.9.8 | 3/3 (first 3 links) | 3.3 s | 4.7 s | 93.5 MB (`deno.exe`; 40.9 MB zip) |
+
+Time per fetch covers extraction, JS challenge solving, download and the ffprobe check, not the cooldown wait. quickjs-ng is about 4 s slower per link but 50 times smaller on disk, and 7.6 s ≤ 3.3 s + 10 s, so quickjs-ng is chosen.
+
+Note: yt-dlp prints `writing DASH m4a. Only some players support this container` for every YouTube download (it would remux with ffmpeg, which instapuller deliberately does not use). ffprobe reads these files correctly; the notice goes to stderr only.
 
 > The `js-indir.ps1` example has not been executed yet; the hashes and sizes above were verified by downloading the assets with `gh release download` and `sha256sum` (2026-11-26).
